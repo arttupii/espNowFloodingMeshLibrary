@@ -1,4 +1,12 @@
-Simple ESPNOW broadcast library with flooding mesh, start network and AES support.
+Simple ESPNOW broadcast library with flooding mesh, star network and AES support.
+
+Features:
+- Maximum number of slave nodes: unlimited
+- Maximum number of master nodes: 1
+- All messages are crypted (AES128)
+- Flooding mesh
+- Star network
+- ESP32&ESP2866
 
 ## Star network
 ```
@@ -55,7 +63,7 @@ void espNowAESBroadcastRecv(const uint8_t *mac_addr, uint8_t *data, int len){
 
 void setup() {
   Serial.begin(115200);
-  //Set device in AP mode to begin with
+
   espNowAESBroadcast_RecvCB(espNowAESBroadcastRecv);
   espNowAESBroadcast_secredkey(secredKey);
   espNowAESBroadcast_begin(ESP_NOW_CHANNEL);
@@ -90,7 +98,7 @@ void espNowAESBroadcastRecv(const uint8_t *mac_addr, uint8_t *data, int len){
 
 void setup() {
   Serial.begin(115200);
-  //Set device in AP mode to begin with
+
   espNowAESBroadcast_RecvCB(espNowAESBroadcastRecv);
   espNowAESBroadcast_begin(ESP_NOW_CHANNEL);
   espNowAESBroadcast_secredkey(secredKey);
