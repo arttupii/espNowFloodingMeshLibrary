@@ -27,7 +27,7 @@ void setup() {
 void loop() {
   static unsigned long m = millis();
   if(m+5000<millis()) {
-    char message[] = "SLAVE HELLO MESSAGE";
+    char message[] = "SLAVE(ESP2866) HELLO MESSAGE";
     espNowAESBroadcast_send((uint8_t*)message, sizeof(message), 0); //set ttl to 3
     m = millis();
   }

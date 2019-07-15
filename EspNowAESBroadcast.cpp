@@ -7,7 +7,7 @@
   #include <ESP8266WiFi.h>
   #include <Esp.h>
   #include <espnow.h>
-  #include "AESLib.h"
+  #include "AESLib.h" //From https://github.com/kakopappa/arduino-esp8266-aes-lib
   #define ESP_OK 0
 #endif
 #include "EspNowAESBroadcast.h"
@@ -26,6 +26,7 @@
 #define USER_MSG 1
 #define SYNC_TIME_MSG 2
 #define INSTANT_TIME_SYNC_REQ 3
+
 unsigned char ivKey[16] = {0xb2, 0x4b, 0xf2, 0xf7, 0x7a, 0xc5, 0xec, 0x0c, 0x5e, 0x1f, 0x4d, 0xc1, 0xae, 0x46, 0x5e, 0x75};
 
 bool masterFlag = false;
@@ -55,7 +56,7 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime=0);
 void hexDump(const uint8_t*b,int len);
 void (*espNowAESBroadcast_receive_cb)(const uint8_t *, uint8_t *, int) = NULL;
 uint16_t calculateCRC(int c, const unsigned char*b,int len);
-int decrypt(const uint8_t *key, const uint8_t *from, uint8_t *to, int size);
+int decrypt(uint8_t *key, const uint8_t *from, unsigned char *to, int size);
 
 uint16_t calculateCRCWithoutTTL(uint8_t *msg) {
   struct broadcast_header *m = (struct broadcast_header*)msg;
@@ -385,20 +386,27 @@ void espNowAESBroadcast_begin(int channel) {
 void espNowAESBroadcast_secredkey(const unsigned char key[16]){
   memcpy(aes_secredKey, key, sizeof(aes_secredKey));
 }
-
-int decrypt(const uint8_t *key, const uint8_t *from, uint8_t *to, int size) {
+int decrypt(uint8_t *key, const uint8_t *from, unsigned char *to, int size) {
   #ifdef DISABLE_CRYPTING
   memcpy((void*)to,(void*)from,size);
   return 0;
   #else
-  unsigned char iv[16];
-  memcpy(iv,ivKey,sizeof(iv));
+    #ifdef ESP32
+      unsigned char iv[16];
+      memcpy(iv,ivKey,sizeof(iv));
 
-  mbedtls_aes_context aes;
-  mbedtls_aes_init( &aes );
-  mbedtls_aes_setkey_enc( &aes, key, 128 );
-  esp_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, size, iv, from, to);
-  mbedtls_aes_free(&aes);
+      mbedtls_aes_context aes;
+      mbedtls_aes_init( &aes );
+      mbedtls_aes_setkey_enc( &aes, key, 128 );
+      esp_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, size, iv, from, to);
+      mbedtls_aes_free(&aes);
+    #else
+      byte iv[16];
+      memcpy(iv,ivKey,sizeof(iv));
+      AES aesLib;
+      aesLib.set_key( (byte *)key , sizeof(key));
+      aesLib.do_aes_decrypt((byte *)from,size , to, key, 128, iv);
+    #endif
   #endif
 }
 
@@ -407,6 +415,7 @@ void encrypt(unsigned char *key, const unsigned char *from, unsigned char *to, i
   memcpy((void*)to,(void*)from,size);
   return;
  #else
+    #ifdef ESP32
      unsigned char iv[16];
      memcpy(iv,ivKey,sizeof(iv));
 
@@ -415,6 +424,13 @@ void encrypt(unsigned char *key, const unsigned char *from, unsigned char *to, i
      mbedtls_aes_setkey_enc( &aes, key, 128 );
      esp_aes_crypt_cbc(&aes, MBEDTLS_AES_ENCRYPT, size, iv, from, to);
      mbedtls_aes_free(&aes);
+    #else
+      byte iv[16];
+      memcpy(iv,ivKey,sizeof(iv));
+      AES aesLib;
+      aesLib.set_key( (byte *)key , sizeof(key));
+      aesLib.do_aes_encrypt((byte *)from,size , to, key, 128, iv);
+    #endif
   #endif
 }
 
@@ -430,9 +446,13 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime) {
   m.header.crc16 = 0;
   m.header.msgId = msgId;
   m.header.ttl= ttl;
-  m.header.randomNoise1 = esp_random();
-  m.header.randomNoise1 = esp_random();
-
+  #ifdef ESP32
+    m.header.randomNoise1 = esp_random();
+    m.header.randomNoise1 = esp_random();
+  #else
+    m.header.randomNoise1 = random(0, 2147483647);
+    m.header.randomNoise1 = random(0, 2147483647);
+  #endif
 
   if(specificTime>0) {
     m.header.time = specificTime;
@@ -451,7 +471,11 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime) {
 
   int dataSizeToSend = ((size + sizeof(m.header))/16+1)*16;
   for(int i=size + sizeof(m.header);i<dataSizeToSend;i++) {
+    #ifdef ESP32
     ((unsigned char*)&m)[i]=esp_random();
+    #else
+    ((unsigned char*)&m)[i]=random(0, 255);
+    #endif
   }
 //  hexDump( (unsigned char *)&m, dataSizeToSend);
   encrypt(aes_secredKey, (const unsigned char *)&m, encryptedData, dataSizeToSend);
@@ -481,9 +505,9 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime) {
       return false;
   }
   //#ifdef DEBUG_PRINTS
-  //Serial.println("SEND:");
+//  Serial.println("SEND:");
 
-  //hexDump((uint8_t*)(encryptedData), dataSizeToSend);
+//  hexDump((uint8_t*)(encryptedData), dataSizeToSend);
 //  #endif
   return true;
 }
