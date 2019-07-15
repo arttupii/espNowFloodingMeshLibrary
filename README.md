@@ -7,14 +7,15 @@ Features:
 - Flooding mesh
 - Star network
 - ESP32&ESP2866
+- Battery node support
 
 ## Star network
 ```
-               SlaveNode
-                   |
-                   |
-                   |
-                   |
+               SlaveNode      BatteryNode
+                   |        /
+                   |       /
+                   |     /
+                   |   /
 SlaveNode-------MasterNode-------------SlaveNode
                    |
                    |
@@ -39,14 +40,14 @@ SlaveNode-------MasterNode-------------SlaveNode
                    |                     |
                    |                     |
                    |                     |
-SlaveNode-------SlaveNode-------------SlaveNode-------SlaveNode-------------SlaveNode
+SlaveNode-------SlaveNode-------------SlaveNode-------SlaveNode-------------SlaveNode---------BatteryNode
    |               |                     |
    |               |                     |
    |               |                     |
    |               |                     |
    ------------SlaveNode------------------
 ```  
-## Create Master node:
+## Create master node:
 ```c++
 #include <EspNowAESBroadcast.h>
 
@@ -117,5 +118,42 @@ void loop() {
   }
   espNowAESBroadcast_loop();
   delay(10);
+}
+```
+
+## Create slave node (Battery):
+```c++
+#include <EspNowAESBroadcast.h>
+#include <time.h>
+#define ESP_NOW_CHANNEL 1
+//AES 128bit
+unsigned char secredKey[] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
+
+void espNowAESBroadcastRecv(const uint8_t *mac_addr, uint8_t *data, int len) {
+  if (len > 0) {
+    Serial.println((const char*)data);
+  }
+  free(data);
+}
+
+void setup() {
+  Serial.begin(115200);
+  //Set device in AP mode to begin with
+  espNowAESBroadcast_RecvCB(espNowAESBroadcastRecv);
+  espNowAESBroadcast_begin(ESP_NOW_CHANNEL);
+  espNowAESBroadcast_secredkey(secredKey);
+  espNowAESBroadcast_setToBatteryNode();
+}
+
+void loop() {
+  static unsigned long m = millis();
+
+  //Ask instant sync from master.
+  espNowAESBroadcast_requestInstantTimeSyncFromMaster();
+  while (espNowAESBroadcast_isSyncedWithMaster() == false);
+  char message[] = "SLAVE(12) HELLO MESSAGE";
+  espNowAESBroadcast_send((uint8_t*)message, sizeof(message), 0); //set ttl to 3
+  espNowAESBroadcast_loop();
+  ESP.deepSleep(60000, WAKE_RF_DEFAULT); //Wakeup every minute 
 }
 ```
