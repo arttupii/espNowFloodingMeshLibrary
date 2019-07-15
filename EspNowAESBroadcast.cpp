@@ -44,6 +44,7 @@ uint8_t ttl;
 uint16_t crc16;
 time_t time;
 };
+
 struct broadcast_header{
   struct header header;
   uint8_t data[240];
@@ -59,7 +60,7 @@ uint16_t calculateCRC(int c, const unsigned char*b,int len);
 int decrypt(uint8_t *key, const uint8_t *from, unsigned char *to, int size);
 
 void espNowAESBroadcast_setAesInitializationVector(const unsigned char iv[16]) {
-  memcpy(ivKey, iv, sizeof(ivkey));
+  memcpy(ivKey, iv, sizeof(ivKey));
 }
 
 void espNowAESBroadcast_setToBatteryNode(bool isBatteryNode) {
@@ -116,7 +117,9 @@ void espNowAESBroadcast_loop(){
       unsigned long elapsed = millis()-start;
       if(elapsed>=RESEND_SYNC_TIME_MS) { //10s
         start = millis();
+        #ifdef DEBUG_PRINTS
         Serial.println("Send time sync message!!");
+        #endif
         sendMsg(NULL, 0, 0, SYNC_TIME_MSG);
       }
   }
@@ -144,7 +147,8 @@ uint16_t calculateCRC(int c, const unsigned char*b,int len) {
 }
 
 void hexDump(const uint8_t*b,int len){
-Serial.println();
+  #ifdef DEBUG_PRINTS
+  Serial.println();
   for(int i=0;i<len;i=i+16) {
     Serial.print("           ");
     for(int x=0;x<16&&(x+i)<len;x++) {
@@ -162,6 +166,7 @@ Serial.println();
   }
   Serial.print("                   Length: ");
   Serial.println(len);
+  #endif
 }
 
 #ifdef ESP32
@@ -236,7 +241,9 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
       #endif
         if(crc16==crc) {
           if(isMessageInRejectedList((uint8_t*)&m)) {
+            #ifdef DEBUG_PRINTS
             Serial.print("Message is already handled. Skip it\n");
+            #endif
             return;
           }
           addMessageToRejectedList((uint8_t*)&m);
@@ -250,14 +257,18 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
               espNowAESBroadcast_receive_cb(mac_addr, m.data, m.header.length);
               ok = true;
             } else {
+              #ifdef DEBUG_PRINTS
               Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.header.time);
               hexDump((uint8_t*)&m,  messageLengtWithHeader);
+              #endif
             }
           }
           if(m.header.msgId==INSTANT_TIME_SYNC_REQ) {
             ok = true;
             if(masterFlag) {
+              #ifdef DEBUG_PRINTS
               Serial.println("Send time sync message!! (Requested)");
+              #endif
               sendMsg(NULL, 0, 0, SYNC_TIME_MSG);
             }
           }
@@ -270,13 +281,17 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
             if(last_time_sync<m.header.time || ALLOW_TIME_ERROR_IN_SYNC_MESSAGE) {
               ok = true;
               last_time_sync = m.header.time;
+              #ifdef DEBUG_PRINTS
               Serial.println("TIME SYNC MSG");
 
               Serial.print("Current time: "); Serial.println(asctime(localtime(&currentTime)));
+              #endif
               setRTCTime(m.header.time);
               currentTime = getRTCTime();
+              #ifdef DEBUG_PRINTS
               Serial.print("New time: "); Serial.println(asctime(localtime(&currentTime)));
               Serial.print("New time (EPOC): "); Serial.println(currentTime);
+              #endif
               syncronized = true;
             }
           }
@@ -287,22 +302,27 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
           }
       }
       else {
+        #ifdef DEBUG_PRINTS
         Serial.print("CRC: ");Serial.print(crc16);Serial.print(" "),Serial.println(crc);
-
         for(int i=0;i<m.header.length;i++){
           Serial.print("0x");Serial.print(data[i],HEX);Serial.print(",");
         }
         Serial.println();
+        #endif
       }
     } else {
+      #ifdef DEBUG_PRINTS
       Serial.print("Invalid message received:"); Serial.println(0,HEX);
       hexDump(data,len);
+      #endif
     }
   }
 }
 void espNowAESBroadcast_requestInstantTimeSyncFromMaster() {
   if(masterFlag) return;
+  #ifdef DEBUG_PRINTS
   Serial.println("Request instant time sync from master.");
+  #endif
   sendMsg(NULL, 0, 0, INSTANT_TIME_SYNC_REQ);
 }
 #ifdef ESP32
@@ -441,7 +461,9 @@ void encrypt(unsigned char *key, const unsigned char *from, unsigned char *to, i
 
 bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime) {
   if(size>=sizeof(struct broadcast_header)) {
+    #ifdef DEBUG_PRINTS
     Serial.println("espNowAESBroadcast_send: Invalid size");
+    #endif
     return false;
   }
 
@@ -506,7 +528,9 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime) {
     int status = esp_now_send((u8*)broadcast_mac, (u8*)(encryptedData), dataSizeToSend);
   #endif
   if (ESP_OK != status) {
+      #ifdef DEBUG_PRINTS
       Serial.println("Error sending message");
+      #endif
       return false;
   }
   //#ifdef DEBUG_PRINTS
