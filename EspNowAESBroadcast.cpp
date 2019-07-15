@@ -14,7 +14,6 @@
 #include <time.h>
 
 #define AES_BLOCK_SIZE  16
-#define AES_BLOCKS_IN_MSG 15
 #define DISPOSABLE_KEY_LENGTH AES_BLOCK_SIZE
 #define REJECTED_LIST_SIZE 100
 
@@ -58,6 +57,10 @@ void hexDump(const uint8_t*b,int len);
 void (*espNowAESBroadcast_receive_cb)(const uint8_t *, const uint8_t *, int) = NULL;
 uint16_t calculateCRC(int c, const unsigned char*b,int len);
 int decrypt(uint8_t *key, const uint8_t *from, unsigned char *to, int size);
+
+void espNowAESBroadcast_setAesInitializationVector(const unsigned char iv[16]) {
+  memcpy(ivKey, iv, sizeof(ivkey));
+}
 
 void espNowAESBroadcast_setToBatteryNode(bool isBatteryNode) {
   batteryNode = isBatteryNode;
@@ -387,6 +390,7 @@ void espNowAESBroadcast_begin(int channel) {
 void espNowAESBroadcast_secredkey(const unsigned char key[16]){
   memcpy(aes_secredKey, key, sizeof(aes_secredKey));
 }
+
 int decrypt(uint8_t *key, const uint8_t *from, unsigned char *to, int size) {
   #ifdef DISABLE_CRYPTING
   memcpy((void*)to,(void*)from,size);
@@ -468,7 +472,7 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime) {
 //  Serial.print("CCCCCCCCCCCCCCCC ");Serial.println(crc);
   m.header.crc16 = crc;
 
-  unsigned char encryptedData[AES_BLOCKS_IN_MSG*AES_BLOCK_SIZE];
+  unsigned char encryptedData[sizeof(struct broadcast_header)+AES_BLOCK_SIZE];
 
   int dataSizeToSend = ((size + sizeof(m.header))/16+1)*16;
   for(int i=size + sizeof(m.header);i<dataSizeToSend;i++) {

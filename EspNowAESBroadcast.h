@@ -20,6 +20,7 @@
     void espNowAESBroadcast_RecvCB(void (*callback)(const uint8_t *, const uint8_t *, int));
     bool espNowAESBroadcast_send(uint8_t* msg, int size, int ttl=0); //Max message length is 236byte
     void espNowAESBroadcast_secredkey(const unsigned char key[16]);
+    void espNowAESBroadcast_setAesInitializationVector(const unsigned char iv[16]);
 
     void espNowAESBroadcast_requestInstantTimeSyncFromMaster(); //Only battery devices should use this!!!
     bool espNowAESBroadcast_isSyncedWithMaster();
