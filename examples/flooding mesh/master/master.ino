@@ -25,7 +25,7 @@ void loop() {
   static unsigned long m = millis();
   if(m+5000<millis()) {
     char message[] = "MASTER HELLO MESSAGE";
-    espNowAESBroadcast_send((uint8_t*)message, sizeof(message), 3); //set ttl to 3
+    espNowAESBroadcast_send((uint8_t*)message, sizeof(message),0); //set ttl to 3
     m = millis();
   }
   espNowAESBroadcast_loop();

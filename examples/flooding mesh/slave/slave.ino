@@ -21,14 +21,14 @@ void setup() {
 
   //Ask instant sync from master.
   espNowAESBroadcast_requestInstantTimeSyncFromMaster();
-  while(espNowAESBroadcast_isSyncedWithMaster()==false);
+  //while(espNowAESBroadcast_isSyncedWithMaster()==false);
 }
 
 void loop() {
   static unsigned long m = millis();
   if(m+5000<millis()) {
     char message[] = "SLAVE HELLO MESSAGE";
-    espNowAESBroadcast_send((uint8_t*)message, sizeof(message), 3); //set ttl to 3
+    espNowAESBroadcast_send((uint8_t*)message, sizeof(message), 0); //set ttl to 3
     m = millis();
   }
   espNowAESBroadcast_loop();

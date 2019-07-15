@@ -26,6 +26,7 @@
 #define USER_MSG 1
 #define SYNC_TIME_MSG 2
 #define INSTANT_TIME_SYNC_REQ 3
+unsigned char ivKey[16] = {0xb2, 0x4b, 0xf2, 0xf7, 0x7a, 0xc5, 0xec, 0x0c, 0x5e, 0x1f, 0x4d, 0xc1, 0xae, 0x46, 0x5e, 0x75};
 
 bool masterFlag = false;
 bool syncronized = false;
@@ -33,12 +34,18 @@ uint8_t syncTTL = 0;
 
 time_t time_fix_value;
 
+struct header{
+uint8_t msgId;
+uint8_t length;
+uint32_t randomNoise1;
+uint32_t randomNoise2;
+uint8_t ttl;
+uint16_t crc16;
+time_t time;
+};
 struct broadcast_header{
-  uint8_t msgId;
-  uint8_t length;
-  uint8_t ttl;
-  uint16_t crc16;
-  time_t time;
+  struct header header;
+  uint8_t data[240];
 };
 
 const unsigned char broadcast_mac[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
@@ -48,18 +55,18 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime=0);
 void hexDump(const uint8_t*b,int len);
 void (*espNowAESBroadcast_receive_cb)(const uint8_t *, uint8_t *, int) = NULL;
 uint16_t calculateCRC(int c, const unsigned char*b,int len);
-int decryptBlock(const uint8_t *key, const uint8_t *from, uint8_t *to);
+int decrypt(const uint8_t *key, const uint8_t *from, uint8_t *to, int size);
 
 uint16_t calculateCRCWithoutTTL(uint8_t *msg) {
-  struct broadcast_header *header = (struct broadcast_header*)msg;
-  uint8_t ttl = header->ttl;
-  uint16_t crc = header->crc16;
+  struct broadcast_header *m = (struct broadcast_header*)msg;
+  uint8_t ttl = m->header.ttl;
+  uint16_t crc = m->header.crc16;
 
-  header->ttl = 0;
-  header->crc16 = 0;
-  uint16_t ret = calculateCRC(0, msg, header->length+sizeof(struct broadcast_header));
-  header->ttl = ttl;
-  header->crc16 = crc;
+  m->header.ttl = 0;
+  m->header.crc16 = 0;
+  uint16_t ret = calculateCRC(0, msg, m->header.length+sizeof(struct header));
+  m->header.ttl = ttl;
+  m->header.crc16 = crc;
   return ret;
 }
 
@@ -197,78 +204,71 @@ void msg_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
 void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
 #endif
 {
+  if(len>=sizeof(struct broadcast_header)) return;
   if(espNowAESBroadcast_receive_cb) {
-    uint8_t disposableKey[DISPOSABLE_KEY_LENGTH];
-    int block=0;
-    {
-      decryptBlock(aes_secredKey, data, disposableKey);
-      block++;
-    }
-    unsigned char buffer[AES_BLOCK_SIZE*AES_BLOCKS_IN_MSG];
-    for(;block<AES_BLOCKS_IN_MSG;block++){
-      decryptBlock(disposableKey, data+block*AES_BLOCK_SIZE, buffer+(block-1)*AES_BLOCK_SIZE);
-    }
+    struct broadcast_header m;
+    //Serial.println("R:");
+    //hexDump(data,len);
 
+    decrypt(aes_secredKey, data, (uint8_t*)&m, len);
 
-    struct broadcast_header *header = (struct broadcast_header*)buffer;
-    unsigned char *data = buffer + sizeof(struct broadcast_header);
-
-    if(header->length>=0 && header->length<(AES_BLOCK_SIZE*AES_BLOCKS_IN_MSG)){
-      uint16_t crc = header->crc16;
-      header->crc16 = 0;
-      uint16_t crc16 = calculateCRC(0, buffer, header->length + sizeof(struct broadcast_header));
-      //hexDump(data,len);
+    if(m.header.length>=0 && m.header.length < (sizeof(m.data) ) ){
+      uint16_t crc = m.header.crc16;
+      int messageLengtWithHeader = m.header.length + sizeof(struct header);
+      m.header.crc16 = 0;
+      uint16_t crc16 = calculateCRC(0, (uint8_t*)&m, messageLengtWithHeader);
+      //hexDump((uint8_t*)&m, len);
       //#ifdef DEBUG_PRINTS
       //Serial.print("REC:"); Serial.println(crc16,HEX);
-      //hexDump(buffer,header->length + sizeof(struct broadcast_header));
+      //hexDump(buffer,m.header.length + sizeof(struct broadcast_header));
       //#endif
 
       #ifdef DEBUG_PRINTS
       Serial.print("CRC: ");Serial.print(crc16);Serial.print(" "),Serial.println(crc);
       #endif
         if(crc16==crc) {
-          if(isMessageInRejectedList(buffer)) {
+          if(isMessageInRejectedList((uint8_t*)&m)) {
             Serial.print("Message is already handled. Skip it\n");
             return;
           }
-          addMessageToRejectedList(buffer);
+          addMessageToRejectedList((uint8_t*)&m);
 
-          uint8_t *b = (unsigned char*)malloc(header->length);
-          memcpy(b, buffer + sizeof(struct broadcast_header), header->length);
+          uint8_t *b = (unsigned char*)malloc(m.header.length);
+          memcpy(b, m.data, m.header.length);
 
           time_t currentTime = getRTCTime();
           bool ok = false;
           //Serial.print("MESSAGE ID");Serial.println(header->msgId);
 
-          if(header->msgId==USER_MSG) {
-            if(compareTime(currentTime,header->time,MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
-              espNowAESBroadcast_receive_cb(mac_addr, b, header->length);
+          if(m.header.msgId==USER_MSG) {
+            if(compareTime(currentTime,m.header.time,MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
+              espNowAESBroadcast_receive_cb(mac_addr, b, m.header.length);
               ok = true;
             } else {
-              Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(header->time);
-              hexDump(buffer,  header->length + sizeof(struct broadcast_header));
+              Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.header.time);
+              hexDump((uint8_t*)&m,  messageLengtWithHeader);
             }
           }
-          if(header->msgId==INSTANT_TIME_SYNC_REQ) {
+          if(m.header.msgId==INSTANT_TIME_SYNC_REQ) {
             ok = true;
             if(masterFlag) {
               Serial.println("Send time sync message!! (Requested)");
               sendMsg(NULL, 0, 0, SYNC_TIME_MSG);
             }
           }
-          if(header->msgId==SYNC_TIME_MSG) {
+          if(m.header.msgId==SYNC_TIME_MSG) {
             if(masterFlag) {
               //only slaves can be syncronized
               return;
             }
             static time_t last_time_sync = 0;
-            if(last_time_sync<header->time || ALLOW_TIME_ERROR_IN_SYNC_MESSAGE) {
+            if(last_time_sync<m.header.time || ALLOW_TIME_ERROR_IN_SYNC_MESSAGE) {
               ok = true;
-              last_time_sync = header->time;
+              last_time_sync = m.header.time;
               Serial.println("TIME SYNC MSG");
 
               Serial.print("Current time: "); Serial.println(asctime(localtime(&currentTime)));
-              setRTCTime(header->time);
+              setRTCTime(m.header.time);
               currentTime = getRTCTime();
               Serial.print("New time: "); Serial.println(asctime(localtime(&currentTime)));
               Serial.print("New time (EPOC): "); Serial.println(currentTime);
@@ -276,21 +276,21 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
             }
           }
 
-          if(ok && header->ttl) {
+          if(ok && m.header.ttl) {
             //Serial.println("TTL");
-            sendMsg(buffer + sizeof(struct broadcast_header), header->length, header->ttl-1, header->msgId, header->time);
+            sendMsg(m.data, m.header.length, m.header.ttl-1, m.header.msgId, m.header.time);
           }
       }
       else {
         Serial.print("CRC: ");Serial.print(crc16);Serial.print(" "),Serial.println(crc);
 
-        for(int i=0;i<header->length;i++){
+        for(int i=0;i<m.header.length;i++){
           Serial.print("0x");Serial.print(data[i],HEX);Serial.print(",");
         }
         Serial.println();
       }
     } else {
-      Serial.print("Invalis message received:"); Serial.println(0,HEX);
+      Serial.print("Invalid message received:"); Serial.println(0,HEX);
       hexDump(data,len);
     }
   }
@@ -306,11 +306,11 @@ static void msg_send_cb(const uint8_t* mac, esp_now_send_status_t sendStatus)
   switch (sendStatus)
   {
     case ESP_NOW_SEND_SUCCESS:
-      Serial.println("Send success");
+      //Serial.println("Send success");
       break;
 
     case ESP_NOW_SEND_FAIL:
-      Serial.println("Send Failure");
+      //Serial.println("Send Failure");
       break;
 
     default:
@@ -323,11 +323,11 @@ static void msg_send_cb(u8* mac, u8 status)
   switch (status)
   {
     case ESP_OK:
-      Serial.println("Send success");
+      //Serial.println("Send success");
       break;
 
     default:
-      Serial.println("Send Failure");
+      //Serial.println("Send Failure");
       break;
   }
 }
@@ -386,117 +386,95 @@ void espNowAESBroadcast_secredkey(const unsigned char key[16]){
   memcpy(aes_secredKey, key, sizeof(aes_secredKey));
 }
 
-int decryptBlock(const uint8_t *key, const uint8_t *from, uint8_t *to) {
+int decrypt(const uint8_t *key, const uint8_t *from, uint8_t *to, int size) {
   #ifdef DISABLE_CRYPTING
-  memcpy((void*)to,(void*)from,16);
+  memcpy((void*)to,(void*)from,size);
   return 0;
   #else
-  #ifdef ESP32
+  unsigned char iv[16];
+  memcpy(iv,ivKey,sizeof(iv));
+
   mbedtls_aes_context aes;
   mbedtls_aes_init( &aes );
   mbedtls_aes_setkey_enc( &aes, key, 128 );
-  int ret = mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_DECRYPT, from, to);
+  esp_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, size, iv, from, to);
   mbedtls_aes_free(&aes);
-  return ret;
-  #else
-    AESLib aesLib;
-    byte aes_iv[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-    aesLib.decrypt((char*)from, (char*)to, (byte*)key, aes_iv);
-  #endif
   #endif
 }
 
-void encryptBlock(unsigned char *key, const unsigned char *from, unsigned char *to) {
-#ifdef DISABLE_CRYPTING
-  memcpy((void*)to,(void*)from,16);
+void encrypt(unsigned char *key, const unsigned char *from, unsigned char *to, int size) {
+ #ifdef DISABLE_CRYPTING
+  memcpy((void*)to,(void*)from,size);
   return;
  #else
-    #ifdef ESP32
-    mbedtls_aes_context aes;
-    mbedtls_aes_init( &aes );
-    mbedtls_aes_setkey_enc( &aes, key, 128 );
-    mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, from, to);
-    mbedtls_aes_free(&aes);
-    #else
-    AESLib aesLib;
-    byte aes_iv[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-    aesLib.encrypt((char*)from, (char*)to, (byte*)key, aes_iv);
-    #endif
+     unsigned char iv[16];
+     memcpy(iv,ivKey,sizeof(iv));
+
+     mbedtls_aes_context aes;
+     mbedtls_aes_init( &aes );
+     mbedtls_aes_setkey_enc( &aes, key, 128 );
+     esp_aes_crypt_cbc(&aes, MBEDTLS_AES_ENCRYPT, size, iv, from, to);
+     mbedtls_aes_free(&aes);
   #endif
 }
 
 bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime) {
-  unsigned char data[AES_BLOCKS_IN_MSG*AES_BLOCK_SIZE];
-  unsigned char disposableKey[DISPOSABLE_KEY_LENGTH];
-
-
-  char block=0;
-
-  if(size>=(sizeof(data)-sizeof(struct broadcast_header) - sizeof(disposableKey))) {
+  if(size>=sizeof(struct broadcast_header)) {
     Serial.println("espNowAESBroadcast_send: Invalid size");
     return false;
   }
-  //Init disposable secred key for rest of blocks
-  for(int i=0;i<sizeof(disposableKey);i++){
-    disposableKey[i]=(uint8_t)random(0, 255);
-  }
-/*
-  disposableKey[0] = '0';
-  disposableKey[1] = '1';
-  disposableKey[2] = '2';
-  disposableKey[3] = '3';
-  disposableKey[4] = '4';
-  disposableKey[5] = '5';
-  disposableKey[6] = '6';
-  disposableKey[7] = '7';
-  disposableKey[8] = '8';
-  disposableKey[9] = '9';
-  disposableKey[10] = 'A';
-  disposableKey[11] = 'B';
-  disposableKey[12] = 'C';
-  disposableKey[13] = 'D';
-  disposableKey[14] = 'E';
-  disposableKey[15] = 'F';
-*/
 
-  struct broadcast_header *header= (struct broadcast_header*)data;
-  memset(header,0x00,sizeof(struct broadcast_header)); //fill
-  header->length = size;
-  header->crc16 = 0;
-  header->msgId = msgId;
-  header->ttl= ttl;
+  struct broadcast_header m;
+  memset(&m,0x00,sizeof(struct broadcast_header)); //fill
+  m.header.length = size;
+  m.header.crc16 = 0;
+  m.header.msgId = msgId;
+  m.header.ttl= ttl;
+  m.header.randomNoise1 = esp_random();
+  m.header.randomNoise1 = esp_random();
+
+
   if(specificTime>0) {
-    header->time = specificTime;
+    m.header.time = specificTime;
   } else {
-    header->time = getRTCTime();
+    m.header.time = getRTCTime();
   }
   if(msg!=NULL){
-    memcpy(data + sizeof(struct broadcast_header), msg, size);
+    memcpy(m.data, msg, size);
   }
-  uint16_t crc = calculateCRC(0, data, size + sizeof(struct broadcast_header));
-  header->crc16 = crc;
+
+  uint16_t crc = calculateCRC(0, (uint8_t*)&m, size + sizeof(m.header));
+//  Serial.print("CCCCCCCCCCCCCCCC ");Serial.println(crc);
+  m.header.crc16 = crc;
 
   unsigned char encryptedData[AES_BLOCKS_IN_MSG*AES_BLOCK_SIZE];
 
-  //encrypt disposableKey
-  encryptBlock(aes_secredKey, disposableKey, encryptedData);
-
-  int b;
-  int data_i=0;
-  int encrypted_i=AES_BLOCK_SIZE;
-  for(b=0;b<AES_BLOCKS_IN_MSG;b++) {
-    encryptBlock(disposableKey, data+data_i, encryptedData+encrypted_i);
-    if((b*AES_BLOCK_SIZE)>=(size+sizeof(struct broadcast_header)+AES_BLOCK_SIZE)) {
-      break;
-    }
-    data_i+=AES_BLOCK_SIZE;
-    encrypted_i+=AES_BLOCK_SIZE;
+  int dataSizeToSend = ((size + sizeof(m.header))/16+1)*16;
+  for(int i=size + sizeof(m.header);i<dataSizeToSend;i++) {
+    ((unsigned char*)&m)[i]=esp_random();
   }
-  addMessageToRejectedList(data);
+//  hexDump( (unsigned char *)&m, dataSizeToSend);
+  encrypt(aes_secredKey, (const unsigned char *)&m, encryptedData, dataSizeToSend);
+
+//  Serial.print("CCCCCCCCCCCCCCCC1 ");Serial.println(m.header.crc16);
+//  hexDump((uint8_t*)(encryptedData), dataSizeToSend);
+/*
+  int esp_aes_crypt_cbc( esp_aes_context *ctx,
+                     int mode,
+                     size_t length,
+                     unsigned char iv[16],
+                     const unsigned char *input,
+                     unsigned char *output );
+*/
+
+  addMessageToRejectedList((uint8_t *)&m);
+//  Serial.print("CCCCCCCCCCCCCCCC2 ");Serial.println(m.header.crc16);
+//  hexDump((uint8_t*)(encryptedData), dataSizeToSend);
+
   #ifdef ESP32
-    esp_err_t status = esp_now_send(broadcast_mac, (uint8_t*)(encryptedData), AES_BLOCK_SIZE*b);
+    esp_err_t status = esp_now_send(broadcast_mac, (uint8_t*)(encryptedData), dataSizeToSend);
   #else
-    int status = esp_now_send((u8*)broadcast_mac, (u8*)(encryptedData), AES_BLOCK_SIZE*b);
+    int status = esp_now_send((u8*)broadcast_mac, (u8*)(encryptedData), dataSizeToSend);
   #endif
   if (ESP_OK != status) {
       Serial.println("Error sending message");
@@ -505,7 +483,7 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime) {
   //#ifdef DEBUG_PRINTS
   //Serial.println("SEND:");
 
-  //hexDump(data,AES_BLOCK_SIZE*b);
+  //hexDump((uint8_t*)(encryptedData), dataSizeToSend);
 //  #endif
   return true;
 }
