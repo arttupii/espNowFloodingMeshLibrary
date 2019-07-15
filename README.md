@@ -24,28 +24,29 @@ SlaveNode-------MasterNode-------------SlaveNode
                SlaveNode
 ```
 ## Flooding mesh network
+In this network example ttl must be >= 4
 ```
                SlaveNode
                    |
-                   |
-                   |
-                   |
-SlaveNode-------MasterNode-------------SlaveNode
-                   |                     |
-                   |                     |
-                   |                     |
-                   |                     |
-               SlaveNode                 |
-                   |                     |
-                   |                     |
-                   |                     |
-                   |                     |
+                   |         Message from master to BatteryNode
+                   |   ---------------------------+
+                   |                     ttl=4    |
+SlaveNode-------MasterNode-------------SlaveNode  |
+                   |                     |        |
+                   |                     |        |
+                   |                     |        |
+                   |                     |        |
+               SlaveNode                 |        |
+                   |                     |        |
+                   |                     |        |
+                   |                     |        +------------------------------------------------>
+                   |                     | ttl=3         ttl=2              ttl=1
 SlaveNode-------SlaveNode-------------SlaveNode-------SlaveNode-------------SlaveNode---------BatteryNode
    |               |                     |
    |               |                     |
    |               |                     |
    |               |                     |
-   ------------SlaveNode------------------
+   +-----------SlaveNode-----------------+
 ```  
 ## Create master node:
 ```c++
