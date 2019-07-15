@@ -1,8 +1,16 @@
-#include <esp_now.h>
-#include <WiFi.h>
+#ifdef ESP32
+  #include <esp_now.h>
+  #include <WiFi.h>
+  #include <rom/crc.h>
+  #include "mbedtls/aes.h"
+#else
+  #include <ESP8266WiFi.h>
+  #include <Esp.h>
+  #include <espnow.h>
+  #include "AESLib.h"
+  #define ESP_OK 0
+#endif
 #include "EspNowAESBroadcast.h"
-#include "mbedtls/aes.h"
-#include <rom/crc.h>
 #include <time.h>
 
 #define AES_BLOCK_SIZE  16
@@ -39,6 +47,8 @@ uint8_t aes_secredKey[] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xA
 bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime=0);
 void hexDump(const uint8_t*b,int len);
 void (*espNowAESBroadcast_receive_cb)(const uint8_t *, uint8_t *, int) = NULL;
+uint16_t calculateCRC(int c, const unsigned char*b,int len);
+int decryptBlock(const uint8_t *key, const uint8_t *from, uint8_t *to);
 
 uint16_t calculateCRCWithoutTTL(uint8_t *msg) {
   struct broadcast_header *header = (struct broadcast_header*)msg;
@@ -47,7 +57,7 @@ uint16_t calculateCRCWithoutTTL(uint8_t *msg) {
 
   header->ttl = 0;
   header->crc16 = 0;
-  uint16_t ret = crc16_le(0, msg, header->length+sizeof(struct broadcast_header));
+  uint16_t ret = calculateCRC(0, msg, header->length+sizeof(struct broadcast_header));
   header->ttl = ttl;
   header->crc16 = crc;
   return ret;
@@ -101,7 +111,21 @@ void espNowAESBroadcast_setToMasterRole(bool master, unsigned char ttl){
   syncTTL = ttl;
 }
 uint16_t calculateCRC(int c, const unsigned char*b,int len) {
-  return crc16_le(0, b, len);
+  #ifdef ESP32
+    return crc16_le(0, b, len);
+  #else
+    //Copied from https://www.lammertbies.nl/forum/viewtopic.php?t=1528
+    uint16_t crc = 0xFFFF;
+    int i;
+    if (len) do {
+    crc ^= *b++;
+    for (i=0; i<8; i++) {
+      if (crc & 1) crc = (crc >> 1) ^ 0x8408;
+      else crc >>= 1;
+    }
+    } while (--len);
+    return(~crc);
+  #endif
 }
 
 void hexDump(const uint8_t*b,int len){
@@ -125,30 +149,27 @@ Serial.println();
   Serial.println(len);
 }
 
-
-int decryptBlock(const uint8_t *key, const uint8_t *from, uint8_t *to) {
-  #ifdef DISABLE_CRYPTING
-  memcpy((void*)to,(void*)from,16);
-  return 0;
-  #else
-
-  mbedtls_aes_context aes;
-  mbedtls_aes_init( &aes );
-  mbedtls_aes_setkey_enc( &aes, key, 128 );
-  int ret = mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_DECRYPT, from, to);
-  mbedtls_aes_free(&aes);
-  return ret;
-  #endif
-}
-
+#ifdef ESP32
 void setRTCTime(time_t time) {
   struct timeval now = { .tv_sec = time };
   settimeofday(&now, NULL);
 }
-
 time_t getRTCTime() {
   return time(NULL);
 }
+#else
+long long rtcFixValue = 0;
+void setRTCTime(time_t t) {
+  long long newTime = t;
+  long long currentTime = time(NULL);
+  rtcFixValue = newTime-currentTime;
+}
+time_t getRTCTime() {
+  long long currentTime = time(NULL);
+  long long fixedTime = currentTime + rtcFixValue;
+  return fixedTime;
+}
+#endif
 
 bool compareTime(time_t current, time_t received, time_t maxDifference) {
   if(current<received) {
@@ -170,7 +191,11 @@ bool espNowAESBroadcast_isSyncedWithMaster() {
   return false;
 }
 
+#ifdef ESP32
 void msg_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
+#else
+void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
+#endif
 {
   if(espNowAESBroadcast_receive_cb) {
     uint8_t disposableKey[DISPOSABLE_KEY_LENGTH];
@@ -194,7 +219,7 @@ void msg_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
       uint16_t crc16 = calculateCRC(0, buffer, header->length + sizeof(struct broadcast_header));
       //hexDump(data,len);
       //#ifdef DEBUG_PRINTS
-      //Serial.println("REC:");
+      //Serial.print("REC:"); Serial.println(crc16,HEX);
       //hexDump(buffer,header->length + sizeof(struct broadcast_header));
       //#endif
 
@@ -213,14 +238,14 @@ void msg_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
 
           time_t currentTime = getRTCTime();
           bool ok = false;
-          Serial.print("MESSAGE ID");Serial.println(header->msgId);
+          //Serial.print("MESSAGE ID");Serial.println(header->msgId);
 
           if(header->msgId==USER_MSG) {
             if(compareTime(currentTime,header->time,MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
               espNowAESBroadcast_receive_cb(mac_addr, b, header->length);
               ok = true;
             } else {
-              Serial.println("Reject message because of time difference:");
+              Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(header->time);
               hexDump(buffer,  header->length + sizeof(struct broadcast_header));
             }
           }
@@ -246,12 +271,13 @@ void msg_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
               setRTCTime(header->time);
               currentTime = getRTCTime();
               Serial.print("New time: "); Serial.println(asctime(localtime(&currentTime)));
+              Serial.print("New time (EPOC): "); Serial.println(currentTime);
               syncronized = true;
             }
           }
 
           if(ok && header->ttl) {
-            Serial.println("TTL");
+            //Serial.println("TTL");
             sendMsg(buffer + sizeof(struct broadcast_header), header->length, header->ttl-1, header->msgId, header->time);
           }
       }
@@ -263,6 +289,9 @@ void msg_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
         }
         Serial.println();
       }
+    } else {
+      Serial.print("Invalis message received:"); Serial.println(0,HEX);
+      hexDump(data,len);
     }
   }
 }
@@ -271,6 +300,7 @@ void espNowAESBroadcast_requestInstantTimeSyncFromMaster() {
   Serial.println("Request instant time sync from master.");
   sendMsg(NULL, 0, 0, INSTANT_TIME_SYNC_REQ);
 }
+#ifdef ESP32
 static void msg_send_cb(const uint8_t* mac, esp_now_send_status_t sendStatus)
 {
   switch (sendStatus)
@@ -287,6 +317,22 @@ static void msg_send_cb(const uint8_t* mac, esp_now_send_status_t sendStatus)
       break;
   }
 }
+#else
+static void msg_send_cb(u8* mac, u8 status)
+{
+  switch (status)
+  {
+    case ESP_OK:
+      Serial.println("Send success");
+      break;
+
+    default:
+      Serial.println("Send Failure");
+      break;
+  }
+}
+#endif
+
 
 
 
@@ -301,21 +347,24 @@ void espNowAESBroadcast_begin(int channel) {
     return;
   }
 
-  #ifdef ESP8266 //ESP32 has real randomnumber generator. It uses noise of WiFI
+
+  #ifdef ESP32
+    esp_now_peer_info_t peer_info;
+    peer_info.channel = channel;
+    memcpy(peer_info.peer_addr, broadcast_mac, sizeof(broadcast_mac));
+    peer_info.ifidx = ESP_IF_WIFI_STA;
+    peer_info.encrypt = false;
+    esp_err_t status = esp_now_add_peer(&peer_info);
+    if (ESP_OK != status)
+    {
+      Serial.println("Could not add peer");
+    }
+  #else
     randomSeed(analogRead(0));
+    esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
+    esp_now_add_peer((u8*)broadcast_mac, ESP_NOW_ROLE_SLAVE, channel, NULL, 0);
+    int status;
   #endif
-
-  esp_now_peer_info_t peer_info;
-  peer_info.channel = channel;
-  memcpy(peer_info.peer_addr, broadcast_mac, sizeof(broadcast_mac));
-  peer_info.ifidx = ESP_IF_WIFI_STA;
-  peer_info.encrypt = false;
-  esp_err_t status = esp_now_add_peer(&peer_info);
-  if (ESP_OK != status)
-  {
-    Serial.println("Could not add peer");
-  }
-
   // Set up callback
   status = esp_now_register_recv_cb(msg_recv_cb);
   if (ESP_OK != status)
@@ -337,16 +386,42 @@ void espNowAESBroadcast_secredkey(const unsigned char key[16]){
   memcpy(aes_secredKey, key, sizeof(aes_secredKey));
 }
 
-void encryptBlock(unsigned char *key, const unsigned char *from, unsigned char *to) {
+int decryptBlock(const uint8_t *key, const uint8_t *from, uint8_t *to) {
   #ifdef DISABLE_CRYPTING
   memcpy((void*)to,(void*)from,16);
-  return;
- #else
+  return 0;
+  #else
+  #ifdef ESP32
   mbedtls_aes_context aes;
   mbedtls_aes_init( &aes );
   mbedtls_aes_setkey_enc( &aes, key, 128 );
-  mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, from, to);
+  int ret = mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_DECRYPT, from, to);
   mbedtls_aes_free(&aes);
+  return ret;
+  #else
+    AESLib aesLib;
+    byte aes_iv[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    aesLib.decrypt((char*)from, (char*)to, (byte*)key, aes_iv);
+  #endif
+  #endif
+}
+
+void encryptBlock(unsigned char *key, const unsigned char *from, unsigned char *to) {
+#ifdef DISABLE_CRYPTING
+  memcpy((void*)to,(void*)from,16);
+  return;
+ #else
+    #ifdef ESP32
+    mbedtls_aes_context aes;
+    mbedtls_aes_init( &aes );
+    mbedtls_aes_setkey_enc( &aes, key, 128 );
+    mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, from, to);
+    mbedtls_aes_free(&aes);
+    #else
+    AESLib aesLib;
+    byte aes_iv[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+    aesLib.encrypt((char*)from, (char*)to, (byte*)key, aes_iv);
+    #endif
   #endif
 }
 
@@ -418,7 +493,11 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime) {
     encrypted_i+=AES_BLOCK_SIZE;
   }
   addMessageToRejectedList(data);
-  esp_err_t status = esp_now_send(broadcast_mac, (uint8_t*)(encryptedData), AES_BLOCK_SIZE*b);
+  #ifdef ESP32
+    esp_err_t status = esp_now_send(broadcast_mac, (uint8_t*)(encryptedData), AES_BLOCK_SIZE*b);
+  #else
+    int status = esp_now_send((u8*)broadcast_mac, (u8*)(encryptedData), AES_BLOCK_SIZE*b);
+  #endif
   if (ESP_OK != status) {
       Serial.println("Error sending message");
       return false;

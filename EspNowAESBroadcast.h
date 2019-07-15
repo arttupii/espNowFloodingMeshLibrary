@@ -1,6 +1,10 @@
 #ifndef ESP_NOBRADCAST_H
 #define ESP_NOBRADCAST_H
+#ifdef ESP32
 #include <esp_now.h>
+#else
+#include <espnow.h>
+#endif
 
 //#define DISABLE_CRYPTING //send messages as plain text
 //#define DEBUG_PRINTS
