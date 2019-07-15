@@ -64,13 +64,13 @@ void espNowAESBroadcast_setToBatteryNode(bool isBatteryNode) {
 }
 uint16_t calculateCRCWithoutTTL(uint8_t *msg) {
   struct broadcast_header *m = (struct broadcast_header*)msg;
-  uint8_t ttl = m->header.ttl;
+  //uint8_t ttl = m->header.ttl;
   uint16_t crc = m->header.crc16;
 
-  m->header.ttl = 0;
+  //m->header.ttl = 0;
   m->header.crc16 = 0;
   uint16_t ret = calculateCRC(0, msg, m->header.length+sizeof(struct header));
-  m->header.ttl = ttl;
+  //m->header.ttl = ttl;
   m->header.crc16 = crc;
   return ret;
 }
