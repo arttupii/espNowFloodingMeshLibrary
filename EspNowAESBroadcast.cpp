@@ -31,6 +31,7 @@ unsigned char ivKey[16] = {0xb2, 0x4b, 0xf2, 0xf7, 0x7a, 0xc5, 0xec, 0x0c, 0x5e,
 
 bool masterFlag = false;
 bool syncronized = false;
+bool batteryNode = false;
 uint8_t syncTTL = 0;
 
 time_t time_fix_value;
@@ -58,6 +59,9 @@ void (*espNowAESBroadcast_receive_cb)(const uint8_t *, uint8_t *, int) = NULL;
 uint16_t calculateCRC(int c, const unsigned char*b,int len);
 int decrypt(uint8_t *key, const uint8_t *from, unsigned char *to, int size);
 
+void espNowAESBroadcast_setToBatteryNode(bool isBatteryNode) {
+  batteryNode = isBatteryNode;
+}
 uint16_t calculateCRCWithoutTTL(uint8_t *msg) {
   struct broadcast_header *m = (struct broadcast_header*)msg;
   uint8_t ttl = m->header.ttl;
@@ -277,7 +281,7 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
             }
           }
 
-          if(ok && m.header.ttl) {
+          if(ok && m.header.ttl && batteryNode==false) {
             //Serial.println("TTL");
             sendMsg(m.data, m.header.length, m.header.ttl-1, m.header.msgId, m.header.time);
           }
