@@ -1,0 +1,25 @@
+{
+  "name": "EspNowAESBroadcast",
+  "version": "0.0.1",
+  "keywords": "flooding mesh, start network, espnow",
+  "description": "SPNOW broadcast library with flooding mesh, start network and AES support.",
+  "examples": "examples/*/*/*.ino",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arttupii/espNowAESBroadcast"
+  },
+  "authors": [
+    {
+      "name": "arttupii",
+      "email": "arttupii@gmail.com",
+      "url": "https://github.com/arttupii/espNowAESBroadcast",
+      "maintainer": true
+    }
+  ],
+  "frameworks": "arduino",
+  "platforms": [
+    "esp32",
+    "espressif32",
+    "esp8266"
+  ]
+}

@@ -55,7 +55,7 @@ uint8_t aes_secredKey[] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xA
 
 bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime=0);
 void hexDump(const uint8_t*b,int len);
-void (*espNowAESBroadcast_receive_cb)(const uint8_t *, uint8_t *, int) = NULL;
+void (*espNowAESBroadcast_receive_cb)(const uint8_t *, const uint8_t *, int) = NULL;
 uint16_t calculateCRC(int c, const unsigned char*b,int len);
 int decrypt(uint8_t *key, const uint8_t *from, unsigned char *to, int size);
 
@@ -103,7 +103,7 @@ bool isMessageInRejectedList(uint8_t *msg) {
   return false;
 }
 
-void espNowAESBroadcast_RecvCB(void (*callback)(const uint8_t *, uint8_t *, int)){
+void espNowAESBroadcast_RecvCB(void (*callback)(const uint8_t *, const uint8_t *, int)){
   espNowAESBroadcast_receive_cb = callback;
 }
 
@@ -238,16 +238,13 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
           }
           addMessageToRejectedList((uint8_t*)&m);
 
-          uint8_t *b = (unsigned char*)malloc(m.header.length);
-          memcpy(b, m.data, m.header.length);
-
           time_t currentTime = getRTCTime();
           bool ok = false;
           //Serial.print("MESSAGE ID");Serial.println(header->msgId);
 
           if(m.header.msgId==USER_MSG) {
             if(compareTime(currentTime,m.header.time,MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
-              espNowAESBroadcast_receive_cb(mac_addr, b, m.header.length);
+              espNowAESBroadcast_receive_cb(mac_addr, m.data, m.header.length);
               ok = true;
             } else {
               Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.header.time);

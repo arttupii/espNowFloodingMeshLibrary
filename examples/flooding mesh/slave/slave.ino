@@ -5,33 +5,29 @@
 //AES 128bit
 unsigned char secredKey[] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF};
 
-void espNowAESBroadcastRecv(const uint8_t *mac_addr, uint8_t *data, int len) {
+void espNowAESBroadcastRecv(const uint8_t *mac_addr, const uint8_t *data, int len) {
   if (len > 0) {
     Serial.println((const char*)data);
   }
-  free(data);
 }
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
   //Set device in AP mode to begin with
   espNowAESBroadcast_RecvCB(espNowAESBroadcastRecv);
   espNowAESBroadcast_begin(ESP_NOW_CHANNEL);
   espNowAESBroadcast_secredkey(secredKey);
-
-  //Ask instant sync from master.
-  espNowAESBroadcast_requestInstantTimeSyncFromMaster();
-  while (espNowAESBroadcast_isSyncedWithMaster() == false);
+  espNowAESBroadcast_setToBatteryNode();
 }
 
 void loop() {
   static unsigned long m = millis();
-  if (m + 5000 < millis()) {
-    char message[] = "SLAVE(12) HELLO MESSAGE";
-    espNowAESBroadcast_send((uint8_t*)message, sizeof(message), 0); //set ttl to 3
-    m = millis();
-  }
+
+  //Ask instant sync from master.
+  espNowAESBroadcast_requestInstantTimeSyncFromMaster();
+  while (espNowAESBroadcast_isSyncedWithMaster() == false);
+  char message[] = "SLAVE(12) HELLO MESSAGE";
+  espNowAESBroadcast_send((uint8_t*)message, sizeof(message), 3); //set ttl to 3
   espNowAESBroadcast_loop();
-  delay(10);
+  ESP.deepSleep(60000, WAKE_RF_DEFAULT); //Wakeup every minute 
 }

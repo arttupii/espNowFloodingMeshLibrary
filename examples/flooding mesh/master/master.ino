@@ -5,11 +5,10 @@
 //AES 128bit
 unsigned char secredKey[] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC,0xDD,0xEE, 0xFF};
 
-void espNowAESBroadcastRecv(const uint8_t *mac_addr, uint8_t *data, int len){
+void espNowAESBroadcastRecv(const uint8_t *mac_addr, const uint8_t *data, int len){
   if(len>0) {
     Serial.println((const char*)data);
   }
-  free(data);
 }
 
 void setup() {
@@ -25,7 +24,7 @@ void loop() {
   static unsigned long m = millis();
   if(m+5000<millis()) {
     char message[] = "MASTER HELLO MESSAGE";
-    espNowAESBroadcast_send((uint8_t*)message, sizeof(message),0); //set ttl to 3
+    espNowAESBroadcast_send((uint8_t*)message, sizeof(message),3); //set ttl to 3
     m = millis();
   }
   espNowAESBroadcast_loop();
