@@ -1,29 +1,15 @@
-Simple ESPNOW broadcast library with flooding mesh, star network and AES support.
+Simple ESPNOW broadcast library with flooding mesh and AES support.
 
 Features:
 - Maximum number of slave nodes: unlimited
 - Number of master nodes: 1
 - All messages are crypted (AES128)
 - Flooding mesh
-- Star network
 - ESP32&ESP2866
 - Battery node support
 - Request&Reply support
 
-## Star network
-```
-               SlaveNode      BatteryNode
-                   |        /
-                   |       /
-                   |     /
-                   |   /
-SlaveNode-------MasterNode-------------SlaveNode
-                   |
-                   |
-                   |
-                   |
-               SlaveNode
-```
+
 ## Flooding mesh network
 In this network example ttl must be >= 4
 ```
@@ -153,7 +139,7 @@ void loop() {
   char message[] = "SLAVE(12) HELLO MESSAGE";
   espNowAESBroadcast_send((uint8_t*)message, sizeof(message), 0); //set ttl to 3
   espNowAESBroadcast_loop();
-  ESP.deepSleep(60000, WAKE_RF_DEFAULT); //Wakeup every minute 
+  ESP.deepSleep(60000, WAKE_RF_DEFAULT); //Wakeup every minute
 }
 ```
 ## Send message and get reply:
@@ -218,7 +204,7 @@ void setup() {
   espNowAESBroadcast_RecvCB(espNowAESBroadcastRecv);
   espNowAESBroadcast_secredkey(secredKey);
   espNowAESBroadcast_begin(ESP_NOW_CHANNEL);
-  
+
   espNowAESBroadcast_requestInstantTimeSyncFromMaster();
   while (espNowAESBroadcast_isSyncedWithMaster() == false);
 }
@@ -228,4 +214,3 @@ void loop() {
   delay(10);
 }
 ```
-

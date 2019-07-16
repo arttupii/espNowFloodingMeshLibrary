@@ -1,8 +1,8 @@
 {
   "name": "EspNowAESBroadcast",
   "version": "0.0.1",
-  "keywords": "flooding mesh, start network, espnow",
-  "description": "SPNOW broadcast library with flooding mesh, start network and AES support.",
+  "keywords": "flooding mesh, espnow, mesh",
+  "description": "ESPNOW broadcast library with flooding mesh and AES support.",
   "examples": "examples/*/*/*.ino",
   "repository": {
     "type": "git",

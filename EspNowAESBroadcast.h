@@ -29,4 +29,7 @@
     void espNowAESBroadcast_requestInstantTimeSyncFromMaster(); //Only battery devices should use this!!!
     bool espNowAESBroadcast_isSyncedWithMaster();
     void espNowAESBroadcast_loop();
+
+    void espNowAESBroadcast_delay(unsigned long tm);
+
 #endif
