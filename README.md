@@ -2,12 +2,13 @@ Simple ESPNOW broadcast library with flooding mesh, star network and AES support
 
 Features:
 - Maximum number of slave nodes: unlimited
-- Maximum number of master nodes: 1
+- Number of master nodes: 1
 - All messages are crypted (AES128)
 - Flooding mesh
 - Star network
 - ESP32&ESP2866
 - Battery node support
+- Request&Reply support
 
 ## Star network
 ```
