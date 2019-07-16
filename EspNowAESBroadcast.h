@@ -7,7 +7,7 @@
 #endif
 
 //#define DISABLE_CRYPTING //send messages as plain text
-//#define DEBUG_PRINTS
+#define DEBUG_PRINTS
 #define MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES 3 //if message time differens more than this from RTC, reject message
 
     void espNowAESBroadcast_begin(int channel);

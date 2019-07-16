@@ -1,11 +1,16 @@
-Simple ESPNOW broadcast library with flooding mesh and AES support.
+# ESPNOW mesh library
+
+ESPNOW broadcast library with flooding mesh and AES support.
 
 Features:
 - Maximum number of slave nodes: unlimited
 - Number of master nodes: 1
+- Master node sends time sync message every 10s to all nodes. (clocks are syncronised)
+- Every message has a time stamp. If the time stamp is too old (or from the future), the message will be rejected.
 - All messages are crypted (AES128)
-- Flooding mesh
-- ESP32&ESP2866
+- Flooding mesh support
+- TTL support (time to life) 
+- ESP32, ESP2866, ESP01
 - Battery node support
 - Request&Reply support
 
@@ -169,8 +174,8 @@ void loop() {
   if(m+5000<millis()) {
     char message2[] = "MARCO";
     espNowAESBroadcast_sendAndHandleReply((uint8_t*)message2, sizeof(message2),3,[](const uint8_t *data, int len){
-        if(len>0) {
-          Serial.print(">");
+        if(len>0) { //Handle reply from other node
+          Serial.print("Reply: "); //Prinst POLO. 
           Serial.println((const char*)data);
         }
     });
@@ -192,8 +197,10 @@ void espNowAESBroadcastRecv(const uint8_t *data, int len, uint32_t replyPrt){
   if(len>0) {
     if(replyPrt) { //Reply asked. Send reply
         char m[]="POLO";
-        Serial.println((char*)data); //Print MARCO
-        espNowAESBroadcast_sendReply((uint8_t*)m, sizeof(m), 0, replyPrt);
+        Serial.println((char*)data); //Prints MARCO
+        espNowAESBroadcast_sendReply((uint8_t*)m, sizeof(m), 0, replyPrt); //Special function for reply messages. Only the sender gets this message.
+    } else {
+      //No reply asked... All others messages are handled in here. 
     }
   }
 }
