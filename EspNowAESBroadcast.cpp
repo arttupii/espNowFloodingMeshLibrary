@@ -42,9 +42,7 @@ time_t time_fix_value;
 struct header{
 uint8_t msgId;
 uint8_t length;
-uint16_t p1;
-uint16_t p2;
-uint16_t p3;
+uint32_t p1;
 uint8_t ttl;
 uint16_t crc16;
 time_t time;
@@ -60,7 +58,7 @@ uint8_t aes_secredKey[] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xA
 bool forwardMsg(struct broadcast_header &m);
 bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime=0, void *ptr=NULL);
 void hexDump(const uint8_t*b,int len);
-void (*espNowAESBroadcast_receive_cb)(const uint8_t *, int, uint16_t) = NULL;
+void (*espNowAESBroadcast_receive_cb)(const uint8_t *, int, uint32_t) = NULL;
 
 void (*espNowAESBroadcast_handle_reply_cb)(const uint8_t *, int) = NULL;
 
@@ -78,7 +76,7 @@ void espNowAESBroadcast_setToBatteryNode(bool isBatteryNode) {
 
 struct requestReplyDbItem{
     void (*cb)(const uint8_t *, int);
-    uint16_t messageIdentifierCode;
+    uint32_t messageIdentifierCode;
     time_t time;
 };
 class RequestReplyDataBase{
@@ -86,9 +84,10 @@ public:
   RequestReplyDataBase(){
     index=0;
     memset(db, 0,sizeof(db));
+    c=0;
   }
   ~RequestReplyDataBase(){}
-  void add(uint16_t messageIdentifierCode, void (*f)(const uint8_t *, int)) {
+  void add(uint32_t messageIdentifierCode, void (*f)(const uint8_t *, int)) {
     db[index].cb = f;
     db[index].messageIdentifierCode = messageIdentifierCode;
     db[index].time = time(NULL);
@@ -97,7 +96,18 @@ public:
       index = 0;
     }
   }
-  const struct requestReplyDbItem* getCallback(uint16_t messageIdentifierCode) {
+  uint32_t calculateMessageIdentifier() {
+    String mac = WiFi.macAddress();
+    uint32_t ret = calculateCRC(0, (const uint8_t*)mac.c_str(), 6);
+    #ifdef ESP32
+    ret = ret<<8 | (esp_random()&0xff);
+    #else
+      ret = ret<<8 | (random(0, 0xff)&0xff);
+    #endif
+    ret = ret<<8 | c++;
+    return ret;
+  }
+  const struct requestReplyDbItem* getCallback(uint32_t messageIdentifierCode) {
     time_t currentTime = time(NULL);
     for(int i=0;i<REQUEST_REPLY_DATA_BASE_SIZE;i++) {
       if(db[i].messageIdentifierCode==messageIdentifierCode) {
@@ -113,6 +123,7 @@ public:
 private:
     struct requestReplyDbItem db[REQUEST_REPLY_DATA_BASE_SIZE];
     int index;
+    uint8_t c;
 };
 RequestReplyDataBase requestReplyDB;
 
@@ -159,7 +170,7 @@ bool isMessageInRejectedList(uint8_t *msg) {
   return false;
 }
 
-void espNowAESBroadcast_RecvCB(void (*callback)(const uint8_t *, int, uint16_t)){
+void espNowAESBroadcast_RecvCB(void (*callback)(const uint8_t *, int, uint32_t)){
   espNowAESBroadcast_receive_cb = callback;
 }
 
@@ -588,12 +599,8 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime, vo
   m.header.ttl= ttl;
   #ifdef ESP32
     m.header.p1 = esp_random();
-    m.header.p2 = esp_random();
-    m.header.p3 = esp_random();
   #else
-    m.header.p1 = random(0, 0xffff);
-    m.header.p2 = random(0, 0xffff);
-    m.header.p3 = random(0, 0xffff);
+    m.header.p1 = random(0, 0xffffffff);
   #endif
 
   if(specificTime>0) {
@@ -606,11 +613,11 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime, vo
   }
 
   if(msgId==USER_REQUIRE_RESPONSE_MSG && ptr!=NULL) {
-    m.header.p1 = calculateCRC(0, (uint8_t*)&m, size + sizeof(m.header)); //Perhaps we should use mac
+    m.header.p1 = requestReplyDB.calculateMessageIdentifier();
     requestReplyDB.add(m.header.p1, (void (*)(const uint8_t*, int))ptr);
     //Serial.print("Send request with "); Serial.println(m.header.p1);
   } if(msgId==USER_REQUIRE_REPLY_MSG && ptr!=NULL) {
-    m.header.p1 = *((int*)ptr);
+    m.header.p1 = *((uint32_t*)ptr);
     //Serial.print("ReplyPtr" );Serial.println(m.header.p1);
   }
 
@@ -673,7 +680,7 @@ bool espNowAESBroadcast_send(uint8_t* msg, int size, int ttl)  {
    return sendMsg(msg, size, ttl, USER_MSG);
 }
 
-bool espNowAESBroadcast_sendReply(uint8_t* msg, int size, int ttl, uint16_t replyIdentifier)  {
+bool espNowAESBroadcast_sendReply(uint8_t* msg, int size, int ttl, uint32_t replyIdentifier)  {
    return sendMsg(msg, size, ttl, USER_REQUIRE_REPLY_MSG, 0,(void*)&replyIdentifier);
 }
 
