@@ -36,7 +36,7 @@ bool masterFlag = false;
 bool syncronized = false;
 bool batteryNode = false;
 uint8_t syncTTL = 0;
-
+bool isEspNowAESBroadcastInitialized = false;
 time_t time_fix_value;
 
 struct header{
@@ -56,7 +56,7 @@ struct broadcast_header{
 const unsigned char broadcast_mac[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 uint8_t aes_secredKey[] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC,0xDD,0xEE, 0xFF};
 bool forwardMsg(struct broadcast_header &m);
-bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime=0, void *ptr=NULL);
+uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime=0, void *ptr=NULL);
 void hexDump(const uint8_t*b,int len);
 static void (*espNowAESBroadcast_receive_cb)(const uint8_t *, int, uint32_t) = NULL;
 
@@ -85,7 +85,7 @@ public:
   RequestReplyDataBase(){
     index=0;
     memset(db, 0,sizeof(db));
-    c=0;
+    c=1;
   }
   ~RequestReplyDataBase(){}
   void add(uint32_t messageIdentifierCode, void (*f)(const uint8_t *, int)) {
@@ -101,11 +101,12 @@ public:
     String mac = WiFi.macAddress();
     uint32_t ret = calculateCRC(0, (const uint8_t*)mac.c_str(), 6);
     #ifdef ESP32
-    ret = ret<<8 | (esp_random()&0xff);
+      ret = ret<<8 | (esp_random()&0xff);
     #else
-      ret = ret<<8 | (random(0, 0xff)&0xff);
+      ret = ret<<8 | (random(0, 0xff)&0xff);
     #endif
     ret = ret<<8 | c++;
+    if(c==0) { c=1; } //messageIdentifier is never zero
     return ret;
   }
   const struct requestReplyDbItem* getCallback(uint32_t messageIdentifierCode) {
@@ -216,6 +217,7 @@ void espNowAESBroadcast_delay(unsigned long tm) {
 }
 
 void espNowAESBroadcast_loop(){
+  if(isEspNowAESBroadcastInitialized==false) return;
   if(masterFlag) {
       static unsigned long start = 0;
       unsigned long elapsed = millis()-start;
@@ -489,7 +491,13 @@ static void msg_send_cb(u8* mac, u8 status)
 }
 #endif
 
+void espNowAESBroadcast_end() {
+  WiFi.disconnect();
 
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  isEspNowAESBroadcastInitialized=true;
+}
 
 
 //   void setSendCb(function<void(void)> f)
@@ -532,6 +540,7 @@ void espNowAESBroadcast_begin(int channel) {
   {
     Serial.println("Could not register send callback");
   }
+  isEspNowAESBroadcastInitialized=true;
 }
 
 void espNowAESBroadcast_secredkey(const unsigned char key[16]){
@@ -628,7 +637,8 @@ bool forwardMsg(struct broadcast_header &m) {
 }
 
 
-bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime, void *ptr) {
+uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime, void *ptr) {
+  uint32_t ret=0;
   if(size>=sizeof(struct broadcast_header)) {
     #ifdef DEBUG_PRINTS
     Serial.println("espNowAESBroadcast_send: Invalid size");
@@ -657,8 +667,9 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime, vo
     memcpy(m.data, msg, size);
   }
 
-  if(msgId==USER_REQUIRE_RESPONSE_MSG && ptr!=NULL) {
+  if(msgId==USER_REQUIRE_RESPONSE_MSG) {
     m.header.p1 = requestReplyDB.calculateMessageIdentifier();
+    ret = m.header.p1;
     requestReplyDB.add(m.header.p1, (void (*)(const uint8_t*, int))ptr);
     //Serial.print("Send request with "); Serial.println(m.header.p1);
   } if(msgId==USER_REQUIRE_REPLY_MSG && ptr!=NULL) {
@@ -700,19 +711,19 @@ bool sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime, vo
       #ifdef DEBUG_PRINTS
       Serial.println("Error sending message");
       #endif
-      return false;
+      return 0;
   }
-  return true;
+  return ret;
 }
 
-bool espNowAESBroadcast_send(uint8_t* msg, int size, int ttl)  {
-   return sendMsg(msg, size, ttl, USER_MSG);
+void espNowAESBroadcast_send(uint8_t* msg, int size, int ttl)  {
+   sendMsg(msg, size, ttl, USER_MSG);
 }
 
-bool espNowAESBroadcast_sendReply(uint8_t* msg, int size, int ttl, uint32_t replyIdentifier)  {
-   return sendMsg(msg, size, ttl, USER_REQUIRE_REPLY_MSG, 0,(void*)&replyIdentifier);
+void espNowAESBroadcast_sendReply(uint8_t* msg, int size, int ttl, uint32_t replyIdentifier)  {
+   sendMsg(msg, size, ttl, USER_REQUIRE_REPLY_MSG, 0,(void*)&replyIdentifier);
 }
 
-bool espNowAESBroadcast_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int)) {
+uint32_t espNowAESBroadcast_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int)) {
   return sendMsg(msg, size, ttl, USER_REQUIRE_RESPONSE_MSG, 0, (void*)f);
 }
