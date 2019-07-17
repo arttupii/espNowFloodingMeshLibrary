@@ -1,6 +1,6 @@
 # ESPNOW mesh library
 
-See: https://github.com/arttupii/EspNowUsb
+See example project: https://github.com/arttupii/EspNowUsb
 
 ESPNOW broadcast library with flooding mesh and AES support.
 
