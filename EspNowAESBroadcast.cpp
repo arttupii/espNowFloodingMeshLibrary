@@ -313,6 +313,10 @@ void hexDump(const uint8_t*b,int len){
 void espNowAESBroadcast_setRTCTime(time_t time) {
   struct timeval now = { .tv_sec = time };
   settimeofday(&now, NULL);
+    if(masterFlag){
+        print(3, "Send time sync");
+        sendMsg(NULL, 0, syncTTL, SYNC_TIME_MSG);
+    }
 }
 time_t espNowAESBroadcast_getRTCTime() {
   return time(NULL);
