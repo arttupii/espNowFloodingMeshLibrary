@@ -23,6 +23,8 @@
     void espNowAESBroadcast_secredkey(const unsigned char key[16]);
     void espNowAESBroadcast_setAesInitializationVector(const unsigned char iv[16]);
 
+    void espNowAESBroadcast_ErrorDebugCB(void (*callback)(int,const char *));
+
     uint32_t espNowAESBroadcast_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int)); //Max message length is 236byte
     void espNowAESBroadcast_sendReply(uint8_t* msg, int size, int ttl, uint32_t replyIdentifier);
 
@@ -32,4 +34,7 @@
 
     void espNowAESBroadcast_delay(unsigned long tm);
 
+
+    void espNowAESBroadcast_setRTCTime(time_t time);
+    time_t espNowAESBroadcast_getRTCTime();
 #endif

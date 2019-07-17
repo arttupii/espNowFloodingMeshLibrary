@@ -66,6 +66,30 @@ uint16_t calculateCRC(int c, const unsigned char*b,int len);
 int decrypt(uint8_t *key, const uint8_t *from, unsigned char *to, int size);
 bool compareTime(time_t current, time_t received, time_t maxDifference);
 
+
+
+void (*errorPrintCB)(int,const char *) = NULL;
+
+void espNowAESBroadcast_ErrorDebugCB(void (*callback)(int, const char *)){
+    errorPrintCB = callback;
+}
+
+void print(int level, const char * format, ... )
+{
+
+ if(errorPrintCB){
+      static char buffer[256];
+      va_list args;
+      va_start (args, format);
+      vsprintf (buffer,format, args);
+     
+      errorPrintCB(level, buffer);
+
+      va_end (args);
+  }
+}
+
+
 void espNowAESBroadcast_setAesInitializationVector(const unsigned char iv[16]) {
   memcpy(ivKey, iv, sizeof(ivKey));
 }
@@ -226,6 +250,7 @@ void espNowAESBroadcast_loop(){
         #ifdef DEBUG_PRINTS
         Serial.println("Send time sync message!!");
         #endif
+        print(3,"Send time sync message.");
         sendMsg(NULL, 0, 0, SYNC_TIME_MSG);
       }
   }
@@ -285,21 +310,26 @@ void hexDump(const uint8_t*b,int len){
 }
 
 #ifdef ESP32
-void setRTCTime(time_t time) {
+void espNowAESBroadcast_setRTCTime(time_t time) {
   struct timeval now = { .tv_sec = time };
   settimeofday(&now, NULL);
 }
-time_t getRTCTime() {
+time_t espNowAESBroadcast_getRTCTime() {
   return time(NULL);
 }
 #else
 long long rtcFixValue = 0;
-void setRTCTime(time_t t) {
+void espNowAESBroadcast_setRTCTime(time_t t) {
   long long newTime = t;
   long long currentTime = time(NULL);
   rtcFixValue = newTime-currentTime;
+
+    if(masterFlag){
+        print(3, "Send time sync");
+        sendMsg(NULL, 0, syncTTL, SYNC_TIME_MSG);
+    }
 }
-time_t getRTCTime() {
+time_t espNowAESBroadcast_getRTCTime() {
   long long currentTime = time(NULL);
   long long fixedTime = currentTime + rtcFixValue;
   return fixedTime;
@@ -351,29 +381,36 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
         hexDump((uint8_t*)&m,messageLengtWithHeader);
         #endif
 
+        bool messageTimeOk = true;
+        time_t currentTime = espNowAESBroadcast_getRTCTime();
+        if(!compareTime(currentTime,m.header.time,MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
+            messageTimeOk = false;
+            print(1,"Received message with invalid time stamp.");
+        }
+
         if(crc16==crc) {
           bool isAlreadyHandled = rejectedMessageDB.isMessageInRejectedList((uint8_t*)&m);
           if(isAlreadyHandled) {
             return;
           }
           rejectedMessageDB.addMessageToRejectedList((uint8_t*)&m);
-          time_t currentTime = getRTCTime();
+          
           bool ok = false;
 
           if( m.header.msgId==USER_MSG) {
-            if(compareTime(currentTime,m.header.time,MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
+            if(messageTimeOk) {
               espNowAESBroadcast_receive_cb(m.data, m.header.length, 0);
               ok = true;
             } else {
               #ifdef DEBUG_PRINTS
               Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.header.time);
               hexDump((uint8_t*)&m,  messageLengtWithHeader);
-              #endif
+              #endif 
             }
           }
 
           if( m.header.msgId==USER_REQUIRE_REPLY_MSG) {
-            if(compareTime(currentTime,m.header.time,MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
+            if(messageTimeOk) {
               const struct requestReplyDbItem* d = requestReplyDB.getCallback(m.header.p1);
               if(d!=NULL){
                 d->cb(m.data, m.header.length);
@@ -384,11 +421,12 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
               Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.header.time);
               hexDump((uint8_t*)&m,  messageLengtWithHeader);
               #endif
+              print(1,"Message rejected because of time difference.");
             }
           }
 
           if(m.header.msgId==USER_REQUIRE_RESPONSE_MSG) {
-            if(compareTime(currentTime,m.header.time,MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
+            if(messageTimeOk) {
               espNowAESBroadcast_receive_cb(m.data, m.header.length, m.header.p1);
               ok = true;
             } else {
@@ -396,6 +434,7 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
               Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.header.time);
               hexDump((uint8_t*)&m,  messageLengtWithHeader);
               #endif
+              print(1,"Message rejected because of time difference.");
             }
           }
           if(m.header.msgId==INSTANT_TIME_SYNC_REQ) {
@@ -404,7 +443,8 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
               #ifdef DEBUG_PRINTS
               Serial.println("Send time sync message!! (Requested)");
               #endif
-              sendMsg(NULL, 0, 0, SYNC_TIME_MSG);
+              sendMsg(NULL, 0, syncTTL, SYNC_TIME_MSG);
+              print(3,"Send time sync message!! (Requested)");
             }
           }
           if(m.header.msgId==SYNC_TIME_MSG) {
@@ -420,12 +460,13 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
               Serial.println("TIME SYNC MSG");
               Serial.print("Current time: "); Serial.print(asctime(localtime(&currentTime)));
               #endif
-              setRTCTime(m.header.time);
-              currentTime = getRTCTime();
+              espNowAESBroadcast_setRTCTime(m.header.time);
+              currentTime = espNowAESBroadcast_getRTCTime();
               #ifdef DEBUG_PRINTS
               Serial.print("New time: "); Serial.print(asctime(localtime(&currentTime)));
               #endif
               syncronized = true;
+              print(3,"Time syncronised with master");
             }
           }
 
@@ -661,7 +702,7 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime
   if(specificTime>0) {
     m.header.time = specificTime;
   } else {
-    m.header.time = getRTCTime();
+    m.header.time = espNowAESBroadcast_getRTCTime();
   }
   if(msg!=NULL){
     memcpy(m.data, msg, size);

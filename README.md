@@ -62,7 +62,10 @@ void setup() {
   espNowAESBroadcast_RecvCB(espNowAESBroadcastRecv);
   espNowAESBroadcast_secredkey(secredKey);
   espNowAESBroadcast_begin(ESP_NOW_CHANNEL);
-  espNowAESBroadcast_setToMasterRole(true,3); //Set ttl to 3.
+  espNowAESBroadcast_setToMasterRole(true,3); //Set ttl to 3. TIME_SYNC message use this ttl
+  espNowAESBroadcast_ErrorDebugCB([](int level, const char *str) {
+    Serial.println(str);
+  });
 }
 
 void loop() {
@@ -99,6 +102,9 @@ void setup() {
 
   //Ask instant sync from master.
   espNowAESBroadcast_requestInstantTimeSyncFromMaster();
+  espNowAESBroadcast_ErrorDebugCB([](int level, const char *str) {
+    Serial.println(str);
+  });
   while(espNowAESBroadcast_isSyncedWithMaster()==false);
 }
 
@@ -169,6 +175,9 @@ void setup() {
   espNowAESBroadcast_secredkey(secredKey);
   espNowAESBroadcast_begin(ESP_NOW_CHANNEL);
   espNowAESBroadcast_setToMasterRole(true,3); //Set ttl to 3.
+  espNowAESBroadcast_ErrorDebugCB([](int level, const char *str) {
+    Serial.println(str);
+  });
 }
 
 void loop() {
@@ -215,6 +224,9 @@ void setup() {
   espNowAESBroadcast_begin(ESP_NOW_CHANNEL);
 
   espNowAESBroadcast_requestInstantTimeSyncFromMaster();
+  espNowAESBroadcast_ErrorDebugCB([](int level, const char *str) {
+    Serial.println(str);
+  });
   while (espNowAESBroadcast_isSyncedWithMaster() == false);
 }
 
