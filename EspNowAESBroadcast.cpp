@@ -60,8 +60,6 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime
 void hexDump(const uint8_t*b,int len);
 static void (*espNowAESBroadcast_receive_cb)(const uint8_t *, int, uint32_t) = NULL;
 
-void (*espNowAESBroadcast_handle_reply_cb)(const uint8_t *, int) = NULL;
-
 uint16_t calculateCRC(int c, const unsigned char*b,int len);
 int decrypt(uint8_t *key, const uint8_t *from, unsigned char *to, int size);
 bool compareTime(time_t current, time_t received, time_t maxDifference);
@@ -418,6 +416,8 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
               const struct requestReplyDbItem* d = requestReplyDB.getCallback(m.header.p1);
               if(d!=NULL){
                 d->cb(m.data, m.header.length);
+              } else {
+                espNowAESBroadcast_receive_cb(m.data, m.header.length, m.header.p1);
               }
               ok = true;
             } else {
