@@ -33,7 +33,7 @@
     void espNowAESBroadcast_loop();
 
     void espNowAESBroadcast_delay(unsigned long tm);
-
+    int espNowAESBroadcast_getTTL();
 
     void espNowAESBroadcast_setRTCTime(time_t time);
     time_t espNowAESBroadcast_getRTCTime();
