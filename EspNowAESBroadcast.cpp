@@ -83,7 +83,7 @@ void print(int level, const char * format, ... )
       va_list args;
       va_start (args, format);
       vsprintf (buffer,format, args);
-     
+
       errorPrintCB(level, buffer);
 
       va_end (args);
@@ -350,16 +350,6 @@ bool compareTime(time_t current, time_t received, time_t maxDifference) {
   return false;
 }
 
-bool espNowAESBroadcast_isSyncedWithMaster() {
-  if(masterFlag) return true;
-  espNowAESBroadcast_loop();
-  if(syncronized) {
-    syncronized = false;
-    return true;
-  }
-  delay(1);
-  return false;
-}
 
 #ifdef ESP32
 void msg_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
@@ -399,7 +389,7 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
             return;
           }
           rejectedMessageDB.addMessageToRejectedList((uint8_t*)&m);
-          
+
           bool ok = false;
 
           if( m.header.msgId==USER_MSG) {
@@ -410,7 +400,7 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
               #ifdef DEBUG_PRINTS
               Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.header.time);
               hexDump((uint8_t*)&m,  messageLengtWithHeader);
-              #endif 
+              #endif
             }
           }
 
@@ -774,4 +764,58 @@ void espNowAESBroadcast_sendReply(uint8_t* msg, int size, int ttl, uint32_t repl
 
 uint32_t espNowAESBroadcast_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int)) {
   return sendMsg(msg, size, ttl, USER_REQUIRE_RESPONSE_MSG, 0, (void*)f);
+}
+
+bool espNowAESBroadcast_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tryCount, void (*f)(const uint8_t *, int), int timeoutMs, int expectedCountOfReplies){
+  static int replyCnt=0;
+  static void (*callback)(const uint8_t *, int);
+  callback = f;
+
+  for(int i=0;i<tryCount;i++) {
+    espNowAESBroadcast_sendAndHandleReply(msg, size, ttl, [](const uint8_t *data, int len){
+      if(callback!=NULL) {
+        callback(data,len);
+      }
+      replyCnt++;
+    });
+
+    unsigned long dbtm = millis();
+
+    while(1) {
+      espNowAESBroadcast_loop();
+      delay(10);
+      if(expectedCountOfReplies<=replyCnt) {
+        return true; //OK all received;
+      }
+      unsigned long elapsed = millis()-dbtm;
+      if(elapsed>timeoutMs) {
+        //timeout
+        print(0, "Timeout: waiting replies");
+        break;
+      }
+    }
+  }
+  return false;
+}
+
+bool espNowAESBroadcast_syncWithMasterAndWait(int timeoutMs, int tryCount) {
+  if(masterFlag) return true;
+  syncronized = false;
+  for(int i=0;i<tryCount;i++) {
+      unsigned long dbtm = millis();
+      espNowAESBroadcast_requestInstantTimeSyncFromMaster();
+
+      while(1) {
+        espNowAESBroadcast_loop();
+        delay(10);
+        if(syncronized) {
+          return true; //OK all received;
+        }
+        unsigned long elapsed = millis()-dbtm;
+        if(elapsed>timeoutMs) {
+          break;
+        }
+      }
+  }
+  return false;
 }

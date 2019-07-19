@@ -26,10 +26,13 @@
     void espNowAESBroadcast_ErrorDebugCB(void (*callback)(int,const char *));
 
     uint32_t espNowAESBroadcast_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int)); //Max message length is 236byte
+
+    //Run this only in Mainloop!!!
+    bool espNowAESBroadcast_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tryCount=1, void (*f)(const uint8_t *, int)=NULL, int timeoutMs=3000, int expectedCountOfReplies=1); //Max message length is 236byte
+    bool espNowAESBroadcast_syncWithMasterAndWait(int timeoutMs=3000, int tryCount=3);
+
     void espNowAESBroadcast_sendReply(uint8_t* msg, int size, int ttl, uint32_t replyIdentifier);
 
-    void espNowAESBroadcast_requestInstantTimeSyncFromMaster(); //Only battery devices should use this!!!
-    bool espNowAESBroadcast_isSyncedWithMaster();
     void espNowAESBroadcast_loop();
 
     void espNowAESBroadcast_delay(unsigned long tm);
