@@ -10,15 +10,15 @@
 # Methods and Functions (KEYWORD2)
 #######################################
 
-espNowAESBroadcast_begin	KEYWORD2
-espNowAESBroadcast_setChannel	KEYWORD2
-espNowAESBroadcast_setToMasterRole	KEYWORD2
-espNowAESBroadcast_RecvCB	KEYWORD2
-espNowAESBroadcast_send	KEYWORD2
-espNowAESBroadcast_secredkey	KEYWORD2
-espNowAESBroadcast_requestInstantTimeSyncFromMaster	KEYWORD2
-espNowAESBroadcast_isSyncedWithMaster	KEYWORD2
-espNowAESBroadcast_loop	KEYWORD2
+espNowFloodingMesh_begin	KEYWORD2
+espNowFloodingMesh_setChannel	KEYWORD2
+espNowFloodingMesh_setToMasterRole	KEYWORD2
+espNowFloodingMesh_RecvCB	KEYWORD2
+espNowFloodingMesh_send	KEYWORD2
+espNowFloodingMesh_secredkey	KEYWORD2
+espNowFloodingMesh_requestInstantTimeSyncFromMaster	KEYWORD2
+espNowFloodingMesh_isSyncedWithMaster	KEYWORD2
+espNowFloodingMesh_loop	KEYWORD2
 
 #######################################
 # Constants (LITERAL1)
