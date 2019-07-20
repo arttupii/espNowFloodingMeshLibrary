@@ -15,6 +15,15 @@ Features:
 - ESP32, ESP2866, ESP01
 - Battery node support
 - Request&Reply support
+- Each Nodes can communicate with each other
+- Ping about 40-60ms
+- Nearly instant connection after poweron
+- Retransmission support
+- Request/Reply support
+- Send and pray support (Send a message to all nodes without reply/ack)
+- Easy to configure
+- Works on esp-now broadcast
+- Arduino
 
 
 ## Flooding mesh network
