@@ -1,8 +1,8 @@
-# ESPNOW mesh library
+# ESPNOW flooding mesh library
 
-See example project: https://github.com/arttupii/EspNowUsb
+See example project: https://github.com/arttupii/EspNowFloodingMesh
 
-ESPNOW broadcast library with flooding mesh and AES support.
+ESPNOW flooding mesh library.
 
 Features:
 - Maximum number of slave nodes: unlimited
