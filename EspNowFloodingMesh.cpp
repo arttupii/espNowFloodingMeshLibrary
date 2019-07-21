@@ -543,23 +543,26 @@ void espNowFloodingMesh_begin(int channel) {
   WiFi.disconnect();
 
   WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
+
   if (esp_now_init() != 0)
   {
     return;
   }
+  esp_now_register_recv_cb(msg_recv_cb);
+  esp_now_register_send_cb(msg_send_cb);
 
   #ifdef ESP32
-    esp_now_peer_info_t peer_info;
-    peer_info.channel = channel;
-    memcpy(peer_info.peer_addr, broadcast_mac, sizeof(broadcast_mac));
-    peer_info.ifidx = ESP_IF_WIFI_STA;
-    peer_info.encrypt = false;
-    esp_err_t status = esp_now_add_peer(&peer_info);
-    if (ESP_OK != status)
-    {
-      Serial.println("Could not add peer");
+    static esp_now_peer_info_t slave;
+    memset(&slave, 0, sizeof(slave));
+    for (int ii = 0; ii < 6; ++ii) {
+      slave.peer_addr[ii] = (uint8_t)0xff;
     }
+    slave.channel = channel; // pick a channel
+    slave.encrypt = 0; // no encryption
+
+    const esp_now_peer_info_t *peer = &slave;
+    const uint8_t *peer_addr = slave.peer_addr;
+    esp_now_add_peer(peer);
   #else
     randomSeed(analogRead(0));
     esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
@@ -567,17 +570,8 @@ void espNowFloodingMesh_begin(int channel) {
     int status;
   #endif
   // Set up callback
-  status = esp_now_register_recv_cb(msg_recv_cb);
-  if (ESP_OK != status)
-  {
-    Serial.println("Could not register callback");
-  }
 
-  status = esp_now_register_send_cb(msg_send_cb);
-  if (ESP_OK != status)
-  {
-    Serial.println("Could not register send callback");
-  }
+
   isespNowFloodingMeshInitialized=true;
 }
 
