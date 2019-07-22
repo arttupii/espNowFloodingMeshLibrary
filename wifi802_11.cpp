@@ -3,6 +3,7 @@
 #ifdef ESP32
 #include <WiFi.h>
 #include "esp_wifi.h"
+#include <esp_wifi_types.h>
 #else
 #include <ESP8266WiFi.h>
 #include <user_interface.h>
@@ -32,18 +33,27 @@ void(*wifi_802_receive_callback)(const uint8_t *, int, uint8_t) = NULL;
 
 #ifdef ESP32
 void receive_raw_cb(void *recv_buf, wifi_promiscuous_pkt_type_t type) {
-  if (!memcmp(station_info->bssid, bsid, sizeof(station_info->bssid))) {
-     return;
-  }
+  /*
+  20:35:41.710 ->            BF 20 24 80 00 00 00 00 A1 00 01 B6 AC 32 16 00 __$__________2__
+  20:35:41.710 ->            93 0A 06 22 00 00 60 63 24 40 02 00 40 0C 00 00 ___"__`c$@__@___
+  20:35:41.710 ->            FF FF FF FF FF FF BA DE AF FE 00 06 BA DE AF FE ________________
+  20:35:41.710 ->            00 06 81 03 00 06 48 45 4C 4C 4F 32 D0 8D 3D 6A ______HELLO2__=j
+  20:35:41.710 ->            78 56 AD BA E5 A8 FB 3F 9C BC FB 3F AD BA AD BA xV_____?___?____
+  20:35:41.743 ->            E5 A8 FB 3F 9C BC FB 3F 00 00 00 00 00 00 00 00 ___?___?________
+  20:35:41.743 ->            00 00 00 00 ____
+  20:35:41.743 ->                    Length: 100
+
+  */
   wifi_promiscuous_pkt_t *sniffer = (wifi_promiscuous_pkt_t *)recv_buf;
 
-  if(sniffer->payload[0]!=0x40) return;
-//  if(memcmp(sniffer->payload+BSSID_OFFSET,raw_HEADER+BSSID_OFFSET, 6)!=0) return;
-  short length = sniffer->payload[0])
-  //hexDump(sniffer->payload, 100);
-  wifi_802_receive_callback(sniffer->payload+2, )
-  Serial.print("Channel:");Serial.println(sniffer->rx_ctrl.channel);
-  Serial.print("RSSI:");Serial.println(sniffer->rx_ctrl.rssi);
+  if(memcmp(sniffer->payload+BSSID_OFFSET,raw_HEADER+BSSID_OFFSET, 6)!=0) return;
+
+  unsigned char *d = sniffer->payload+DATA_START_OFFSET;
+  short length = ((unsigned short)d[0])<<8 | d[1];
+
+  wifi_802_receive_callback(d+2, length,sniffer->rx_ctrl.rssi);
+//  Serial.print("Channel:");Serial.println(sniffer->rx_ctrl.channel);
+//  Serial.print("RSSI:");Serial.println(sniffer->rx_ctrl.rssi);
   return;
 }
 #else
@@ -60,7 +70,6 @@ void receive_raw_cb(unsigned char*frm, short unsigned int len) {
   */
   uint8_t rssi = frm[0];
   //if(frm[0]!=0x40) return;
-  struct wifi_promiscuous_pkt_t *p = (struct wifi_promiscuous_pkt_t *)frm;
 
   if(frm[12]!=0x40!=0) return;
   if(memcmp(frm+BSSID_OFFSET+12,raw_HEADER+BSSID_OFFSET, 6)!=0) return;
