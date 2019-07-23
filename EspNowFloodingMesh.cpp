@@ -349,6 +349,7 @@ time_t espNowFloodingMesh_getRTCTime() {
 #endif
 
 bool compareTime(time_t current, time_t received, time_t maxDifference) {
+  if(current==received) return true;
   if(current<received) {
     return ((received-current) <= maxDifference);
   } else {
@@ -396,6 +397,8 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
         if(!compareTime(currentTime,m.header.time,MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
             messageTimeOk = false;
             print(1,"Received message with invalid time stamp.");
+            Serial.print("CurrentTime:");Serial.println(currentTime);
+            Serial.print("ReceivedTime:");Serial.println(m.header.time);
         }
 
         if(crc16==crc) {
@@ -460,7 +463,6 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
             }
           }
           if(m.header.msgId==SYNC_TIME_MSG) {
-
             if(masterFlag) {
               //only slaves can be syncronized
               return;
@@ -662,17 +664,15 @@ void encrypt(unsigned char *key, const unsigned char *from, unsigned char *to, i
 bool forwardMsg(struct broadcast_header &m) {
    if(m.header.ttl==0) return false;
    m.header.ttl= m.header.ttl-1;
-
    m.header.crc16=0;
 
   uint16_t crc = calculateCRC(0, (uint8_t*)&m, m.header.length + sizeof(m.header));
   m.header.crc16 = crc;
 
-  int dataSizeToSend = ((m.header.length + sizeof(m.header))/16-1)*16;
+  int dataSizeToSend = ((m.header.length + sizeof(m.header))/16)*16;
   unsigned char encryptedData[dataSizeToSend+AES_BLOCK_SIZE];
 
-
-  for(int i=m.header.length + sizeof(m.header);i<dataSizeToSend;i++) {
+  for(int i=m.header.length + sizeof(m.header)+1;i<dataSizeToSend;i++) {
     #ifdef ESP32
     ((unsigned char*)&m)[i]=esp_random();
     #else
@@ -751,11 +751,11 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime
   uint16_t crc = calculateCRC(0, (uint8_t*)&m, size + sizeof(m.header));
   m.header.crc16 = crc;
 
-  int dataSizeToSend = ((size + sizeof(m.header)-1)/16+1)*16;
+  int dataSizeToSend = ((size + sizeof(m.header))/16+1)*16;
 
   unsigned char encryptedData[dataSizeToSend+AES_BLOCK_SIZE];
 
-  for(int i=size + sizeof(m.header);i<dataSizeToSend;i++) {
+  for(int i=size + sizeof(m.header)+1;i<dataSizeToSend;i++) {
     #ifdef ESP32
     ((unsigned char*)&m)[i]=esp_random();
     #else
