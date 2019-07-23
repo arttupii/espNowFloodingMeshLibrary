@@ -1,16 +1,26 @@
 #ifndef ESP_NOBRADCAST_H
 #define ESP_NOBRADCAST_H
-#ifdef ESP32
-#include <esp_now.h>
-#else
-#include <espnow.h>
+
+#define USE_RAW_801_11
+
+#ifndef USE_RAW_801_11
+  #ifdef ESP32
+  #include <esp_now.h>
+  #else
+  #include <espnow.h>
+  #endif
 #endif
 
 //#define DISABLE_CRYPTING //send messages as plain text
 //#define DEBUG_PRINTS
 #define MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES 3 //if message time differens more than this from RTC, reject message
 
+    #ifndef USE_RAW_801_11
     void espNowFloodingMesh_begin(int channel);
+    #else
+    void espNowFloodingMesh_begin(int channel, char bsId[6]);
+    #endif
+
     void espNowFloodingMesh_end();
 
     void espNowFloodingMesh_setChannel(int channel);

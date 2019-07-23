@@ -1,18 +1,25 @@
 #ifdef ESP32
-  #include <esp_now.h>
-  #include <WiFi.h>
+  #ifndef USE_RAW_801_11
+    #include <esp_now.h>
+    #include <WiFi.h>
+  #endif
   #include <rom/crc.h>
   #include "mbedtls/aes.h"
 #else
-  #include <ESP8266WiFi.h>
-  #include <Esp.h>
-  #include <espnow.h>
-  #include "AESLib.h" //From https://github.com/kakopappa/arduino-esp8266-aes-lib
+#ifndef USE_RAW_801_11
+    #include <ESP8266WiFi.h>
+    #include <Esp.h>
+    #include <espnow.h>
+  #endif
   #define ESP_OK 0
 #endif
+#include "AESLib.h" //From https://github.com/kakopappa/arduino-esp8266-aes-lib
+
 #include "EspNowFloodingMesh.h"
 #include <time.h>
-
+#ifdef USE_RAW_801_11
+#include "wifi802_11.h"
+#endif
 #define AES_BLOCK_SIZE  16
 #define DISPOSABLE_KEY_LENGTH AES_BLOCK_SIZE
 #define REJECTED_LIST_SIZE 50
@@ -116,7 +123,7 @@ public:
   void add(uint32_t messageIdentifierCode, void (*f)(const uint8_t *, int)) {
     db[index].cb = f;
     db[index].messageIdentifierCode = messageIdentifierCode;
-    db[index].time = time(NULL);
+    db[index].time = espNowFloodingMesh_getRTCTime();
     index++;
     if(index>=REQUEST_REPLY_DATA_BASE_SIZE) {
       index = 0;
@@ -135,7 +142,7 @@ public:
     return ret;
   }
   const struct requestReplyDbItem* getCallback(uint32_t messageIdentifierCode) {
-    time_t currentTime = time(NULL);
+    time_t currentTime = espNowFloodingMesh_getRTCTime();
     for(int i=0;i<REQUEST_REPLY_DATA_BASE_SIZE;i++) {
       if(db[i].messageIdentifierCode==messageIdentifierCode) {
         if(compareTime(currentTime, db[i].time, MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
@@ -350,19 +357,27 @@ bool compareTime(time_t current, time_t received, time_t maxDifference) {
   return false;
 }
 
-
-#ifdef ESP32
-void msg_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
+#ifdef USE_RAW_801_11
+void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
 #else
-void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
+  #ifdef ESP32
+  void msg_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
+  #else
+  void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
+  #endif
 #endif
 {
+  #ifdef DEBUG_PRINTS
+  Serial.print("REC[RAW]:");
+  hexDump((uint8_t*)data,len);
+  #endif
+
   if(len>=sizeof(struct broadcast_header)) return;
 
   if(espNowFloodingMesh_receive_cb) {
     struct broadcast_header m;
 
-    decrypt(aes_secredKey, data, (uint8_t*)&m, len);
+    decrypt(aes_secredKey, (const uint8_t*)data, (uint8_t*)&m, len);
 
     if(m.header.length>=0 && m.header.length < (sizeof(m.data) ) ){
       uint16_t crc = m.header.crc16;
@@ -445,6 +460,7 @@ void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
             }
           }
           if(m.header.msgId==SYNC_TIME_MSG) {
+
             if(masterFlag) {
               //only slaves can be syncronized
               return;
@@ -539,38 +555,49 @@ void espNowFloodingMesh_end() {
 
 
 //   void setSendCb(function<void(void)> f)
+#ifndef USE_RAW_801_11
 void espNowFloodingMesh_begin(int channel) {
-  WiFi.disconnect();
+#else
+void espNowFloodingMesh_begin(int channel, char bsId[6]) {
+#endif
+  #ifndef USE_RAW_801_11
+    WiFi.disconnect();
 
-  WiFi.mode(WIFI_STA);
+    WiFi.mode(WIFI_STA);
 
-  if (esp_now_init() != 0)
-  {
-    return;
-  }
-  esp_now_register_recv_cb(msg_recv_cb);
-  esp_now_register_send_cb(msg_send_cb);
-
-  #ifdef ESP32
-    static esp_now_peer_info_t slave;
-    memset(&slave, 0, sizeof(slave));
-    for (int ii = 0; ii < 6; ++ii) {
-      slave.peer_addr[ii] = (uint8_t)0xff;
+    if (esp_now_init() != 0)
+    {
+      return;
     }
-    slave.channel = channel; // pick a channel
-    slave.encrypt = 0; // no encryption
+    esp_now_register_recv_cb(msg_recv_cb);
+    esp_now_register_send_cb(msg_send_cb);
 
-    const esp_now_peer_info_t *peer = &slave;
-    const uint8_t *peer_addr = slave.peer_addr;
-    esp_now_add_peer(peer);
+    #ifdef ESP32
+      static esp_now_peer_info_t slave;
+      memset(&slave, 0, sizeof(slave));
+      for (int ii = 0; ii < 6; ++ii) {
+        slave.peer_addr[ii] = (uint8_t)0xff;
+      }
+      slave.channel = channel; // pick a channel
+      slave.encrypt = 0; // no encryption
+
+      const esp_now_peer_info_t *peer = &slave;
+      const uint8_t *peer_addr = slave.peer_addr;
+      esp_now_add_peer(peer);
+    #else
+      randomSeed(analogRead(0));
+      esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
+      esp_now_add_peer((u8*)broadcast_mac, ESP_NOW_ROLE_SLAVE, channel, NULL, 0);
+      int status;
+    #endif
+    // Set up callback
   #else
-    randomSeed(analogRead(0));
-    esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
-    esp_now_add_peer((u8*)broadcast_mac, ESP_NOW_ROLE_SLAVE, channel, NULL, 0);
-    int status;
+    #ifndef ESP32
+      randomSeed(analogRead(0));
+    #endif
+      wifi_802_11_begin(bsId, channel);
+      wifi_802_receive_cb(msg_recv_cb);
   #endif
-  // Set up callback
-
 
   isespNowFloodingMeshInitialized=true;
 }
@@ -588,11 +615,13 @@ int decrypt(uint8_t *key, const uint8_t *from, unsigned char *to, int size) {
       unsigned char iv[16];
       memcpy(iv,ivKey,sizeof(iv));
 
-      mbedtls_aes_context aes;
-      mbedtls_aes_init( &aes );
-      mbedtls_aes_setkey_enc( &aes, key, 128 );
-      esp_aes_crypt_cbc(&aes, MBEDTLS_AES_DECRYPT, size, iv, from, to);
-      mbedtls_aes_free(&aes);
+      esp_aes_acquire_hardware ();
+      esp_aes_context ctx;
+      esp_aes_init( &ctx );
+      esp_aes_setkey( &ctx, key, 128 );
+      esp_aes_crypt_cbc(&ctx, ESP_AES_DECRYPT, size, iv, from, to);
+      esp_aes_free(&ctx);
+      esp_aes_release_hardware ();
     #else
       byte iv[16];
       memcpy(iv,ivKey,sizeof(iv));
@@ -612,11 +641,14 @@ void encrypt(unsigned char *key, const unsigned char *from, unsigned char *to, i
      unsigned char iv[16];
      memcpy(iv,ivKey,sizeof(iv));
 
-     mbedtls_aes_context aes;
-     mbedtls_aes_init( &aes );
-     mbedtls_aes_setkey_enc( &aes, key, 128 );
-     esp_aes_crypt_cbc(&aes, MBEDTLS_AES_ENCRYPT, size, iv, from, to);
-     mbedtls_aes_free(&aes);
+     esp_aes_acquire_hardware ();
+     esp_aes_context ctx;
+     esp_aes_init( &ctx );
+     esp_aes_setkey( &ctx, key, 128 );
+     esp_aes_crypt_cbc(&ctx, ESP_AES_ENCRYPT, size, iv, from, to);
+     esp_aes_free(&ctx);
+     esp_aes_release_hardware ();
+
     #else
       byte iv[16];
       memcpy(iv,ivKey,sizeof(iv));
@@ -636,9 +668,10 @@ bool forwardMsg(struct broadcast_header &m) {
   uint16_t crc = calculateCRC(0, (uint8_t*)&m, m.header.length + sizeof(m.header));
   m.header.crc16 = crc;
 
-  unsigned char encryptedData[sizeof(struct broadcast_header)+AES_BLOCK_SIZE];
+  int dataSizeToSend = ((m.header.length + sizeof(m.header))/16-1)*16;
+  unsigned char encryptedData[dataSizeToSend+AES_BLOCK_SIZE];
 
-  int dataSizeToSend = ((m.header.length + sizeof(m.header))/16+1)*16;
+
   for(int i=m.header.length + sizeof(m.header);i<dataSizeToSend;i++) {
     #ifdef ESP32
     ((unsigned char*)&m)[i]=esp_random();
@@ -646,7 +679,9 @@ bool forwardMsg(struct broadcast_header &m) {
     ((unsigned char*)&m)[i]=random(0, 255);
     #endif
   }
+
   encrypt(aes_secredKey, (const unsigned char *)&m, encryptedData, dataSizeToSend);
+
   rejectedMessageDB.addMessageToRejectedList((uint8_t *)&m);
 
   #ifdef DEBUG_PRINTS
@@ -654,17 +689,21 @@ bool forwardMsg(struct broadcast_header &m) {
   hexDump((const uint8_t*)&m, dataSizeToSend);
   #endif
 
-  #ifdef ESP32
-    esp_err_t status = esp_now_send(broadcast_mac, (uint8_t*)(encryptedData), dataSizeToSend);
+  #ifdef USE_RAW_801_11
+      wifi_802_11_send((uint8_t*)(encryptedData), dataSizeToSend);
   #else
-    int status = esp_now_send((u8*)broadcast_mac, (u8*)(encryptedData), dataSizeToSend);
+    #ifdef ESP32
+      esp_err_t status = esp_now_send(broadcast_mac, (uint8_t*)(encryptedData), dataSizeToSend);
+    #else
+      int status = esp_now_send((u8*)broadcast_mac, (u8*)(encryptedData), dataSizeToSend);
+    #endif
+    if (ESP_OK != status) {
+        #ifdef DEBUG_PRINTS
+        Serial.println("Error sending message");
+        #endif
+        return false;
+    }
   #endif
-  if (ESP_OK != status) {
-      #ifdef DEBUG_PRINTS
-      Serial.println("Error sending message");
-      #endif
-      return false;
-  }
   return true;
 }
 
@@ -712,9 +751,10 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime
   uint16_t crc = calculateCRC(0, (uint8_t*)&m, size + sizeof(m.header));
   m.header.crc16 = crc;
 
-  unsigned char encryptedData[sizeof(struct broadcast_header)+AES_BLOCK_SIZE];
+  int dataSizeToSend = ((size + sizeof(m.header)-1)/16+1)*16;
 
-  int dataSizeToSend = ((size + sizeof(m.header))/16+1)*16;
+  unsigned char encryptedData[dataSizeToSend+AES_BLOCK_SIZE];
+
   for(int i=size + sizeof(m.header);i<dataSizeToSend;i++) {
     #ifdef ESP32
     ((unsigned char*)&m)[i]=esp_random();
@@ -723,28 +763,34 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime
     #endif
   }
 
-
   encrypt(aes_secredKey, (const unsigned char *)&m, encryptedData, dataSizeToSend);
-
   #ifdef DEBUG_PRINTS
   Serial.print("Send:");
-  hexDump((const uint8_t*)&m, dataSizeToSend);
+  hexDump((const unsigned char *)&m, dataSizeToSend);
   #endif
+   #ifdef DEBUG_PRINTS
+    Serial.print("Send[RAW]:");
+    hexDump((const uint8_t*)encryptedData, dataSizeToSend);
+    #endif
 
   rejectedMessageDB.addMessageToRejectedList((uint8_t *)&m);
 
 
-  #ifdef ESP32
-    esp_err_t status = esp_now_send(broadcast_mac, (uint8_t*)(encryptedData), dataSizeToSend);
+  #ifdef USE_RAW_801_11
+      wifi_802_11_send((uint8_t*)(encryptedData), dataSizeToSend);
   #else
-    int status = esp_now_send((u8*)broadcast_mac, (u8*)(encryptedData), dataSizeToSend);
+    #ifdef ESP32
+      esp_err_t status = esp_now_send(broadcast_mac, (uint8_t*)(encryptedData), dataSizeToSend);
+    #else
+      int status = esp_now_send((u8*)broadcast_mac, (u8*)(encryptedData), dataSizeToSend);
+    #endif
+    if (ESP_OK != status) {
+        #ifdef DEBUG_PRINTS
+        Serial.println("Error sending message");
+        #endif
+        return false;
+    }
   #endif
-  if (ESP_OK != status) {
-      #ifdef DEBUG_PRINTS
-      Serial.println("Error sending message");
-      #endif
-      return 0;
-  }
   return ret;
 }
 

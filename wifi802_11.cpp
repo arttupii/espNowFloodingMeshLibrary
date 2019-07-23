@@ -1,5 +1,4 @@
 #include"wifi802_11.h"
-
 #ifdef ESP32
 #include <WiFi.h>
 #include "esp_wifi.h"
@@ -8,6 +7,7 @@
 #include <ESP8266WiFi.h>
 #include <user_interface.h>
 #endif
+#include<Arduino.h>
 
 const char *ssid = "MESH_NETWORK";
 char wifi_password[20];
@@ -45,15 +45,14 @@ void receive_raw_cb(void *recv_buf, wifi_promiscuous_pkt_type_t type) {
 
   */
   wifi_promiscuous_pkt_t *sniffer = (wifi_promiscuous_pkt_t *)recv_buf;
-
+  if(sniffer->payload[0]!=0x40) return;
   if(memcmp(sniffer->payload+BSSID_OFFSET,raw_HEADER+BSSID_OFFSET, 6)!=0) return;
 
   unsigned char *d = sniffer->payload+DATA_START_OFFSET;
   short length = ((unsigned short)d[0])<<8 | d[1];
 
   wifi_802_receive_callback(d+2, length,sniffer->rx_ctrl.rssi);
-//  Serial.print("Channel:");Serial.println(sniffer->rx_ctrl.channel);
-//  Serial.print("RSSI:");Serial.println(sniffer->rx_ctrl.rssi);
+
   return;
 }
 #else
@@ -71,21 +70,20 @@ void receive_raw_cb(unsigned char*frm, short unsigned int len) {
   uint8_t rssi = frm[0];
   //if(frm[0]!=0x40) return;
 
-  if(frm[12]!=0x40!=0) return;
+  if(frm[12]!=0x40) return;
   if(memcmp(frm+BSSID_OFFSET+12,raw_HEADER+BSSID_OFFSET, 6)!=0) return;
   unsigned char *d = frm+12+DATA_START_OFFSET;
 
   short length = ((unsigned short)d[0])<<8 | d[1];
 
   if(wifi_802_receive_callback!=NULL) {
-    wifi_802_receive_callback(d+2, length, length);
+    wifi_802_receive_callback(d+2, length, rssi);
   }
 }
 #endif
-
+char password[15];
 void wifi_802_11_begin(char bsId[], int channel){
   //WiFi.begin();
-  char password[15];
   for(int i=0;i<sizeof(password);i++) {
     #ifdef ESP32
     char r = (esp_random()%('z'-' ')) + ' ';
@@ -118,7 +116,7 @@ void wifi_802_receive_cb(void(*cb)(const uint8_t *, int, uint8_t)) {
 }
 
 void wifi_802_11_send(const uint8_t *d, int len) {
-  uint8_t buf[300];
+  uint8_t buf[500];
   if(len>sizeof(buf)-sizeof(raw_HEADER)-2) return;
 
   memcpy(buf,raw_HEADER, sizeof(raw_HEADER));
@@ -134,5 +132,4 @@ void wifi_802_11_send(const uint8_t *d, int len) {
   wifi_send_pkt_freedom(buf, sizeof(raw_HEADER) + len+ 2, false);
   #endif
   sequence++;
-
 }
