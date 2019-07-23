@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include "esp_wifi.h"
 #include <esp_wifi_types.h>
+#include <esp_interface.h>
 #else
 #include <ESP8266WiFi.h>
 #include <user_interface.h>
@@ -23,7 +24,7 @@ uint8_t raw_HEADER[] = {
   //MAC HEADER
   0x40, 0x0C,             // 0-1: Frame Control  //Version 0 && Data Frame && MESH
   0x00, 0x00,             // 2-3: Duration
-  0xff, 0xff, 0xff, 0xff, 0xff, 0xff,       // 4-9: Destination address (broadcast)
+  0xaa, 0xbb, 0xcc, 0xee, 0xff, 0x11,       // 4-9: Destination address (broadcast)
   0xba, 0xde, 0xaf, 0xfe, 0x00, 0x06,       // 10-15: Source address
   0xba, 0xde, 0xaf, 0xfe, 0x00, 0x06,       // 16-21: BSSID
   0x00, 0x00             // 22-23: Sequence / fragment number
@@ -84,29 +85,18 @@ void receive_raw_cb(unsigned char*frm, short unsigned int len) {
 char password[15];
 void wifi_802_11_begin(char bsId[], int channel){
   //WiFi.begin();
-  for(int i=0;i<sizeof(password);i++) {
-    #ifdef ESP32
-    char r = (esp_random()%('z'-' ')) + ' ';
-    #else
-    char r = random(' ','z');
-    #endif
-    password[i] = r;
-  }
-  password[sizeof(password)-1]=0;
-
   String mac = WiFi.macAddress();
   memcpy(raw_HEADER+BSSID_OFFSET, bsId, 6);
   memcpy(raw_HEADER+MY_MAC_OFFSET, mac.c_str(), 6);
 
-  WiFi.softAP(ssid, password, 1, true);
-
   #ifdef ESP32
+  esp_wifi_set_mode(WIFI_MODE_STA);
   esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
   esp_wifi_set_promiscuous_rx_cb(receive_raw_cb);
   esp_wifi_set_promiscuous(1);
   esp_wifi_set_max_tx_power(127);
   #else
-  wifi_set_opmode(0x1);
+  wifi_set_opmode(STATION_MODE);
   wifi_set_channel(channel);
   wifi_set_promiscuous_rx_cb(receive_raw_cb);
   wifi_promiscuous_enable(true);
@@ -120,19 +110,22 @@ void wifi_802_receive_cb(void(*cb)(const uint8_t *, int, uint8_t)) {
 
 void wifi_802_11_send(const uint8_t *d, int len) {
   uint8_t buf[500];
+  for(int i=0;i<5;i++){
   if(len>sizeof(buf)-sizeof(raw_HEADER)-2) return;
 
   memcpy(buf,raw_HEADER, sizeof(raw_HEADER));
-  memcpy(buf+SEQNUM_OFFSET,(char*)&sequence, 2);
   memcpy(buf+sizeof(raw_HEADER)+2, d, len);
+  memcpy(buf+SEQNUM_OFFSET,(char*)&sequence, 2);
 
   buf[sizeof(raw_HEADER)]=(len>>8)&0xff;
   buf[sizeof(raw_HEADER)+1]=len&0xff;
 
-  #ifdef ESP32
-  esp_wifi_80211_tx(WIFI_IF_AP, buf, sizeof(raw_HEADER) + len+ 2, false);
-  #else
-  wifi_send_pkt_freedom(buf, sizeof(raw_HEADER) + len+ 2, false);
-  #endif
-  sequence++;
+
+    #ifdef ESP32
+    esp_wifi_80211_tx(ESP_IF_WIFI_STA, buf, sizeof(raw_HEADER) + len+ 2, true);
+    #else
+    wifi_send_pkt_freedom(buf, sizeof(raw_HEADER) + len+ 2, true);
+    #endif
+    sequence++;
+  }
 }

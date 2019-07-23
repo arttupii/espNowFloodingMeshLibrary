@@ -6,20 +6,20 @@
   #include <rom/crc.h>
   #include "mbedtls/aes.h"
 #else
-#ifndef USE_RAW_801_11
-    #include <ESP8266WiFi.h>
-    #include <Esp.h>
-    #include <espnow.h>
-  #endif
-  #define ESP_OK 0
-#endif
+#include <ESP8266WiFi.h>
 #include "AESLib.h" //From https://github.com/kakopappa/arduino-esp8266-aes-lib
+#endif
 
+#ifndef USE_RAW_801_11
+    #include "espnowBroadcast.h"
+#endif
 #include "EspNowFloodingMesh.h"
 #include <time.h>
+
 #ifdef USE_RAW_801_11
 #include "wifi802_11.h"
 #endif
+
 #define AES_BLOCK_SIZE  16
 #define DISPOSABLE_KEY_LENGTH AES_BLOCK_SIZE
 #define REJECTED_LIST_SIZE 50
@@ -361,15 +361,9 @@ bool compareTime(time_t current, time_t received, time_t maxDifference) {
 #ifdef USE_RAW_801_11
 void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
 #else
-  #ifdef ESP32
-  void msg_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
-  #else
-  void msg_recv_cb(u8 *mac_addr, u8 *data, u8 len)
-  #endif
+  void msg_recv_cb(const uint8_t *data, int len)
 #endif
 {
-  Serial.print("RSSI:");
-  Serial.println(rssi);
   #ifdef DEBUG_PRINTS
   Serial.print("REC[RAW]:");
   hexDump((uint8_t*)data,len);
@@ -516,45 +510,8 @@ void espNowFloodingMesh_requestInstantTimeSyncFromMaster() {
   #endif
   sendMsg(NULL, 0, 0, INSTANT_TIME_SYNC_REQ);
 }
-#ifdef ESP32
-static void msg_send_cb(const uint8_t* mac, esp_now_send_status_t sendStatus)
-{
-  switch (sendStatus)
-  {
-    case ESP_NOW_SEND_SUCCESS:
-      //Serial.println("Send success");
-      break;
-
-    case ESP_NOW_SEND_FAIL:
-      //Serial.println("Send Failure");
-      break;
-
-    default:
-      break;
-  }
-}
-#else
-static void msg_send_cb(u8* mac, u8 status)
-{
-  switch (status)
-  {
-    case ESP_OK:
-      //Serial.println("Send success");
-      break;
-
-    default:
-      //Serial.println("Send Failure");
-      break;
-  }
-}
-#endif
 
 void espNowFloodingMesh_end() {
-  WiFi.disconnect();
-
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  isespNowFloodingMeshInitialized=true;
 }
 
 
@@ -564,45 +521,18 @@ void espNowFloodingMesh_begin(int channel) {
 #else
 void espNowFloodingMesh_begin(int channel, char bsId[6]) {
 #endif
-  #ifndef USE_RAW_801_11
-    WiFi.disconnect();
 
-    WiFi.mode(WIFI_STA);
-
-    if (esp_now_init() != 0)
-    {
-      return;
-    }
-    esp_now_register_recv_cb(msg_recv_cb);
-    esp_now_register_send_cb(msg_send_cb);
-
-    #ifdef ESP32
-      static esp_now_peer_info_t slave;
-      memset(&slave, 0, sizeof(slave));
-      for (int ii = 0; ii < 6; ++ii) {
-        slave.peer_addr[ii] = (uint8_t)0xff;
-      }
-      slave.channel = channel; // pick a channel
-      slave.encrypt = 0; // no encryption
-
-      const esp_now_peer_info_t *peer = &slave;
-      const uint8_t *peer_addr = slave.peer_addr;
-      esp_now_add_peer(peer);
-    #else
-      randomSeed(analogRead(0));
-      esp_now_set_self_role(ESP_NOW_ROLE_SLAVE);
-      esp_now_add_peer((u8*)broadcast_mac, ESP_NOW_ROLE_SLAVE, channel, NULL, 0);
-      int status;
-    #endif
-    // Set up callback
-  #else
-    #ifndef ESP32
-      randomSeed(analogRead(0));
-    #endif
-      wifi_802_11_begin(bsId, channel);
-      wifi_802_receive_cb(msg_recv_cb);
+  #ifndef ESP32
+    randomSeed(analogRead(0));
   #endif
 
+  #ifndef USE_RAW_801_11
+      espnowBroadcast_cb(msg_recv_cb);
+      espnowBroadcast_begin(channel);
+  #else
+        wifi_802_11_begin(bsId, channel);
+        wifi_802_receive_cb(msg_recv_cb);
+  #endif
   isespNowFloodingMeshInitialized=true;
 }
 
@@ -694,17 +624,7 @@ bool forwardMsg(struct broadcast_header &m) {
   #ifdef USE_RAW_801_11
       wifi_802_11_send((uint8_t*)(encryptedData), dataSizeToSend);
   #else
-    #ifdef ESP32
-      esp_err_t status = esp_now_send(broadcast_mac, (uint8_t*)(encryptedData), dataSizeToSend);
-    #else
-      int status = esp_now_send((u8*)broadcast_mac, (u8*)(encryptedData), dataSizeToSend);
-    #endif
-    if (ESP_OK != status) {
-        #ifdef DEBUG_PRINTS
-        Serial.println("Error sending message");
-        #endif
-        return false;
-    }
+      espnowBroadcast_send(encryptedData, dataSizeToSend);
   #endif
   return true;
 }
@@ -781,17 +701,7 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime
   #ifdef USE_RAW_801_11
       wifi_802_11_send((uint8_t*)(encryptedData), dataSizeToSend);
   #else
-    #ifdef ESP32
-      esp_err_t status = esp_now_send(broadcast_mac, (uint8_t*)(encryptedData), dataSizeToSend);
-    #else
-      int status = esp_now_send((u8*)broadcast_mac, (u8*)(encryptedData), dataSizeToSend);
-    #endif
-    if (ESP_OK != status) {
-        #ifdef DEBUG_PRINTS
-        Serial.println("Error sending message");
-        #endif
-        return false;
-    }
+      espnowBroadcast_send(encryptedData, dataSizeToSend);
   #endif
   return ret;
 }
