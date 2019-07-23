@@ -368,6 +368,8 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
   #endif
 #endif
 {
+  Serial.print("RSSI:");
+  Serial.println(rssi);
   #ifdef DEBUG_PRINTS
   Serial.print("REC[RAW]:");
   hexDump((uint8_t*)data,len);

@@ -101,13 +101,16 @@ void wifi_802_11_begin(char bsId[], int channel){
   WiFi.softAP(ssid, password, 1, true);
 
   #ifdef ESP32
+  esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
   esp_wifi_set_promiscuous_rx_cb(receive_raw_cb);
   esp_wifi_set_promiscuous(1);
+  esp_wifi_set_max_tx_power(127);
   #else
   wifi_set_opmode(0x1);
-  wifi_set_channel(1);
+  wifi_set_channel(channel);
   wifi_set_promiscuous_rx_cb(receive_raw_cb);
   wifi_promiscuous_enable(true);
+  WiFi.setOutputPower(20.5);
   #endif
 }
 
