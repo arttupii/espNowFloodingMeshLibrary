@@ -66,7 +66,7 @@ int espNowFloodingMesh_getTTL() {
 const unsigned char broadcast_mac[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 uint8_t aes_secredKey[] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC,0xDD,0xEE, 0xFF};
 bool forwardMsg(struct broadcast_header &m);
-uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime=0, void *ptr=NULL);
+uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr=NULL);
 void hexDump(const uint8_t*b,int len);
 static void (*espNowFloodingMesh_receive_cb)(const uint8_t *, int, uint32_t) = NULL;
 
@@ -295,7 +295,7 @@ uint16_t calculateCRC(int c, const unsigned char*b,int len) {
 }
 
 void hexDump(const uint8_t*b,int len){
-  #ifdef DEBUG_PRINTS
+  //#ifdef DEBUG_PRINTS
   Serial.println();
   for(int i=0;i<len;i=i+16) {
     Serial.print("           ");
@@ -314,7 +314,7 @@ void hexDump(const uint8_t*b,int len){
   }
   Serial.print("                   Length: ");
   Serial.println(len);
-  #endif
+//  #endif
 }
 
 #ifdef ESP32
@@ -373,9 +373,14 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
 
   if(espNowFloodingMesh_receive_cb) {
     struct broadcast_header m;
-
+    memset(&m,0,sizeof(m));
     decrypt(aes_secredKey, (const uint8_t*)data, (uint8_t*)&m, len);
 
+    if(!(m.header.msgId==USER_MSG||m.header.msgId==SYNC_TIME_MSG||m.header.msgId==INSTANT_TIME_SYNC_REQ
+      ||m.header.msgId==USER_REQUIRE_RESPONSE_MSG||m.header.msgId==USER_REQUIRE_REPLY_MSG)) {
+        //Quick wilter;
+        return;
+    }
     if(m.header.length>=0 && m.header.length < (sizeof(m.data) ) ){
       uint16_t crc = m.header.crc16;
       int messageLengtWithHeader = m.header.length + sizeof(struct header);
@@ -390,15 +395,17 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
 
         bool messageTimeOk = true;
         time_t currentTime = espNowFloodingMesh_getRTCTime();
-        if(!compareTime(currentTime,m.header.time,MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
-            messageTimeOk = false;
-            print(1,"Received message with invalid time stamp.");
-            Serial.print("CurrentTime:");Serial.println(currentTime);
-            Serial.print("ReceivedTime:");Serial.println(m.header.time);
-        }
 
         if(crc16==crc) {
           bool isAlreadyHandled = rejectedMessageDB.isMessageInRejectedList((uint8_t*)&m);
+
+          if(!compareTime(currentTime,m.header.time, MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
+              messageTimeOk = false;
+              print(1,"Received message with invalid time stamp.");
+              Serial.print("CurrentTime:");Serial.println(currentTime);
+              Serial.print("ReceivedTime:");Serial.println(m.header.time);
+          }
+
           if(isAlreadyHandled) {
             return;
           }
@@ -467,15 +474,17 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
             if(last_time_sync<m.header.time || ALLOW_TIME_ERROR_IN_SYNC_MESSAGE) {
               ok = true;
               last_time_sync = m.header.time;
-              #ifdef DEBUG_PRINTS
+            //  #ifdef DEBUG_PRINTS
               Serial.println("TIME SYNC MSG");
+              //currentTime = espNowFloodingMesh_getRTCTime();
+
               Serial.print("Current time: "); Serial.print(asctime(localtime(&currentTime)));
-              #endif
+            //  #endif
               espNowFloodingMesh_setRTCTime(m.header.time);
+          //    #ifdef DEBUG_PRINTS
               currentTime = espNowFloodingMesh_getRTCTime();
-              #ifdef DEBUG_PRINTS
-              Serial.print("New time: "); Serial.print(asctime(localtime(&currentTime)));
-              #endif
+              Serial.print("    New time: "); Serial.print(asctime(localtime(&currentTime)));
+          //    #endif
               syncronized = true;
               print(3,"Time syncronised with master");
             }
@@ -630,7 +639,7 @@ bool forwardMsg(struct broadcast_header &m) {
 }
 
 
-uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime, void *ptr) {
+uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr) {
   uint32_t ret=0;
   if(size>=sizeof(struct broadcast_header)) {
     #ifdef DEBUG_PRINTS
@@ -651,11 +660,8 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime
     m.header.p1 = random(0, 0xffffffff);
   #endif
 
-  if(specificTime>0) {
-    m.header.time = specificTime;
-  } else {
-    m.header.time = espNowFloodingMesh_getRTCTime();
-  }
+  m.header.time = espNowFloodingMesh_getRTCTime();
+
   if(msg!=NULL){
     memcpy(m.data, msg, size);
   }
@@ -679,9 +685,9 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, time_t specificTime
 
   for(int i=size + sizeof(m.header)+1;i<dataSizeToSend;i++) {
     #ifdef ESP32
-    ((unsigned char*)&m)[i]=esp_random();
+  //  ((unsigned char*)&m)[i]=esp_random();
     #else
-    ((unsigned char*)&m)[i]=random(0, 255);
+  //  ((unsigned char*)&m)[i]=random(0, 255);
     #endif
   }
 
@@ -711,11 +717,11 @@ void espNowFloodingMesh_send(uint8_t* msg, int size, int ttl)  {
 }
 
 void espNowFloodingMesh_sendReply(uint8_t* msg, int size, int ttl, uint32_t replyIdentifier)  {
-   sendMsg(msg, size, ttl, USER_REQUIRE_REPLY_MSG, 0,(void*)&replyIdentifier);
+   sendMsg(msg, size, ttl, USER_REQUIRE_REPLY_MSG, (void*)&replyIdentifier);
 }
 
 uint32_t espNowFloodingMesh_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int)) {
-  return sendMsg(msg, size, ttl, USER_REQUIRE_RESPONSE_MSG, 0, (void*)f);
+  return sendMsg(msg, size, ttl, USER_REQUIRE_RESPONSE_MSG, (void*)f);
 }
 
 bool espNowFloodingMesh_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tryCount, void (*f)(const uint8_t *, int), int timeoutMs, int expectedCountOfReplies){
