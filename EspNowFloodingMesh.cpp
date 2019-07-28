@@ -9,6 +9,7 @@
 #include <ESP8266WiFi.h>
 #include "AESLib.h" //From https://github.com/kakopappa/arduino-esp8266-aes-lib
 #endif
+#include "AESLib.h" //From https://github.com/kakopappa/arduino-esp8266-aes-lib
 
 #ifndef USE_RAW_801_11
     #include "espnowBroadcast.h"
@@ -45,6 +46,7 @@ bool batteryNode = false;
 uint8_t syncTTL = 0;
 bool isespNowFloodingMeshInitialized = false;
 time_t time_fix_value;
+int myBsid = 0x112233;
 
 #pragma pack(push,1)
 
@@ -97,14 +99,14 @@ int espNowFloodingMesh_getTTL() {
 }
 const unsigned char broadcast_mac[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 uint8_t aes_secredKey[] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC,0xDD,0xEE, 0xFF};
-bool forwardMsg(struct meshFrame &m);
+bool forwardMsg(struct meshFrame *m);
 uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr=NULL);
 void hexDump(const uint8_t*b,int len);
 static void (*espNowFloodingMesh_receive_cb)(const uint8_t *, int, uint32_t) = NULL;
 
 uint16_t calculateCRC(int c, const unsigned char*b,int len);
-uint16_t calculateCRC(struct meshFrame &m);
-int decrypt(const uint8_t *_from, struct meshFrame &m, int size);
+uint16_t calculateCRC(struct meshFrame *m);
+int decrypt(const uint8_t *_from, struct meshFrame *m, int size);
 bool compareTime(time_t current, time_t received, time_t maxDifference);
 
 
@@ -217,19 +219,19 @@ public:
       index=0;
     }
   }
-  void addMessageToRejectedList(struct meshFrame &m) {
+  void addMessageToRejectedList(struct meshFrame *m) {
     uint16_t crc = calculateCRCWithoutTTL(m);
 
     for(int i=0;i<REJECTED_LIST_SIZE;i++){
       if(rejectedMsgList[i]==crc) {
-        if(ttlList[i]<m.secred.header.ttl) {
-          ttlList[i] = m.secred.header.ttl;
+        if(ttlList[i]<m->secred.header.ttl) {
+          ttlList[i] = m->secred.header.ttl;
         }
         return;
       }
     }
     rejectedMsgList[index] = crc;
-    ttlList[index] = m.secred.header.ttl;
+    ttlList[index] = m->secred.header.ttl;
 
     index++;
     if(index>=REJECTED_LIST_SIZE) {
@@ -237,11 +239,11 @@ public:
     }
   }
 
-  bool isMessageInRejectedList(struct meshFrame &m) {
+  bool isMessageInRejectedList(struct meshFrame *m) {
     uint16_t crc = calculateCRCWithoutTTL(m);
     for(int i=0;i<REJECTED_LIST_SIZE;i++){
       if(rejectedMsgList[i]==crc) {
-        if(ttlList[i]>=m.secred.header.ttl) {
+        if(ttlList[i]>=m->secred.header.ttl) {
           return true;
         }
       }
@@ -252,11 +254,11 @@ private:
     uint16_t rejectedMsgList[REJECTED_LIST_SIZE];
     uint8_t ttlList[REJECTED_LIST_SIZE];
     int index;
-    uint16_t calculateCRCWithoutTTL(struct meshFrame &m) {
-      uint8_t ttl = m.secred.header.ttl;
-      m.secred.header.ttl = 0;
+    uint16_t calculateCRCWithoutTTL(struct meshFrame *m) {
+      uint8_t ttl = m->secred.header.ttl;
+      m->secred.header.ttl = 0;
       uint16_t ret = calculateCRC(m);
-      m.secred.header.ttl = ttl;
+      m->secred.header.ttl = ttl;
       return ret;
     }
 };
@@ -297,6 +299,7 @@ void espNowFloodingMesh_loop(){
       rejectedMessageDB.removeItem();
     }
   }
+  delay(1);
 }
 void espNowFloodingMesh_setToMasterRole(bool master, unsigned char ttl){
   masterFlag = master;
@@ -320,12 +323,12 @@ uint16_t calculateCRC(int c, const unsigned char*b,int len) {
   #endif
 }
 
-uint16_t calculateCRC(struct meshFrame &m){
-  uint16_t crc = m.secred.header.crc16;
-  m.secred.header.crc16 = 0;
-  int size = m.secred.header.length + sizeof(m.secred.header);
-  uint16_t ret = calculateCRC(0, (const unsigned char*)&m.secred.header,size);
-  m.secred.header.crc16 = crc;
+uint16_t calculateCRC(struct meshFrame *m){
+  uint16_t crc = m->secred.header.crc16;
+  m->secred.header.crc16 = 0;
+  int size = m->secred.header.length + sizeof(m->secred.header);
+  uint16_t ret = calculateCRC(0, (const unsigned char*)m + sizeof(bsid_t),size);
+  m->secred.header.crc16 = crc;
   return ret;
 }
 
@@ -405,12 +408,17 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
   #endif
   struct meshFrame m;
   m.bsid.set(data);
+
+  if(myBsid!=m.bsid.get()) {
+    Serial.println(myBsid, HEX);
+    Serial.println(m.bsid.get(), HEX);
+
+    return;
+  }
   if(len>=sizeof(struct meshFrame)) return;
 
-    uint8_t b[len];
-    memcpy(b,data,len);
     //memset(&m,0,sizeof(m));
-    decrypt((const uint8_t*)b, m, len);
+    decrypt((const uint8_t*)data, &m, len);
 #ifdef DEBUG_PRINTS
     Serial.print("REC:");
     hexDump((uint8_t*)&m,m.secred.header.length + sizeof(m.secred.header)+3);
@@ -423,7 +431,7 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
     if(m.secred.header.length>=0 && m.secred.header.length < (sizeof(m.secred.data) ) ){
       uint16_t crc = m.secred.header.crc16;
       int messageLengtWithHeader = m.secred.header.length + sizeof(struct header);
-      uint16_t crc16 = calculateCRC(m);
+      uint16_t crc16 = calculateCRC(&m);
 
         #ifdef DEBUG_PRINTS
         Serial.print("REC:");
@@ -438,15 +446,15 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
           if(!compareTime(currentTime,m.secred.header.time, MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
               messageTimeOk = false;
               print(1,"Received message with invalid time stamp.");
-              Serial.print("CurrentTime:");Serial.println(currentTime);
-              Serial.print("ReceivedTime:");Serial.println(m.secred.header.time);
+            //  Serial.print("CurrentTime:");Serial.println(currentTime);
+            //  Serial.print("ReceivedTime:");Serial.println(m.secred.header.time);
           }
 
-          if(rejectedMessageDB.isMessageInRejectedList(m)) {
+          if(rejectedMessageDB.isMessageInRejectedList(&m)) {
             //Serial.println("Message already handed");
             return;
           }
-          rejectedMessageDB.addMessageToRejectedList(m);
+          rejectedMessageDB.addMessageToRejectedList(&m);
 
           bool ok = false;
 
@@ -535,16 +543,19 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
           if(ok && m.secred.header.ttl && batteryNode==false) {
             //Serial.println("TTL");
             //delay(1);
-            forwardMsg(m);
+            forwardMsg(&m);
           }
       } else {
-      //#ifdef DEBUG_PRINTS
+      #ifdef DEBUG_PRINTS
         Serial.print("#CRC: ");Serial.print(crc16);Serial.print(" "),Serial.println(crc);
         for(int i=0;i<m.secred.header.length;i++){
           Serial.print("0x");Serial.print(data[i],HEX);Serial.print(",");
         }
         Serial.println();
-      //  #endif
+        hexDump((uint8_t*)&m,200);
+        Serial.println();
+        hexDump((uint8_t*)data,200);
+       #endif
       }
     } else {
       #ifdef DEBUG_PRINTS
@@ -567,7 +578,7 @@ void espNowFloodingMesh_end() {
 
 //   void setSendCb(function<void(void)> f)
 #ifndef USE_RAW_801_11
-void espNowFloodingMesh_begin(int channel) {
+void espNowFloodingMesh_begin(int channel, int bsid) {
 #else
 void espNowFloodingMesh_begin(int channel, char bsId[6]) {
 #endif
@@ -584,93 +595,99 @@ void espNowFloodingMesh_begin(int channel, char bsId[6]) {
         wifi_802_receive_cb(msg_recv_cb);
   #endif
   isespNowFloodingMeshInitialized=true;
+
+  myBsid = bsid;
 }
 
 void espNowFloodingMesh_secredkey(const unsigned char key[16]){
   memcpy(aes_secredKey, key, sizeof(aes_secredKey));
 }
 
-int decrypt(const uint8_t *_from, struct meshFrame &m, int size) {
-  uint8_t *key = aes_secredKey;
-  unsigned char *to = (unsigned char *)&m.secred;
-  size=size-sizeof(bsid_t);
-  const uint8_t *from = _from + sizeof(bsid_t);
-  #ifdef DISABLE_CRYPTING
-  memcpy((void*)to,(void*)from,size);
-  return 0;
-  #else
-    #ifdef ESP32
-      unsigned char iv[16];
-      memcpy(iv,ivKey,sizeof(iv));
+int decrypt(const uint8_t *_from, struct meshFrame *m, int size) {
+  unsigned char iv[16];
+  memcpy(iv,ivKey,sizeof(iv));
 
-      esp_aes_acquire_hardware ();
-      esp_aes_context ctx;
-      esp_aes_init( &ctx );
-      esp_aes_setkey( &ctx, key, 128 );
-      esp_aes_crypt_cbc(&ctx, ESP_AES_DECRYPT, size, iv, from, to);
-      esp_aes_free(&ctx);
-      esp_aes_release_hardware ();
-    #else
-      byte iv[16];
-      memcpy(iv,ivKey,sizeof(iv));
-      AES aesLib;
-      aesLib.set_key( (byte *)key , sizeof(key));
-      aesLib.do_aes_decrypt((byte *)from,size , to, key, 128, iv);
-    #endif
-  #endif
+  uint8_t to[2*16];
+  for(int i=0;i<size;i=i+16) {
+      const uint8_t *from = _from + i + sizeof(bsid_t);
+      uint8_t *key = aes_secredKey;
+
+      #ifdef DISABLE_CRYPTING
+        memcpy(to,from,16);
+      #else
+        #ifdef ESP32
+
+          esp_aes_context ctx;
+          esp_aes_init( &ctx );
+          esp_aes_setkey( &ctx, key, 128 );
+          esp_aes_acquire_hardware ();
+          esp_aes_crypt_cbc(&ctx, ESP_AES_DECRYPT, 16, iv, from, to);
+          esp_aes_release_hardware ();
+          esp_aes_free(&ctx);
+
+        #else
+          AES aesLib;
+          aesLib.set_key( (byte *)key , sizeof(key));
+          aesLib.do_aes_decrypt((byte *)from,16 , to, key, 128, iv);
+        #endif
+      #endif
+
+      if((i+sizeof(bsid_t)+16)<=sizeof(m->secred)) {
+        memcpy((uint8_t*)m+i+sizeof(bsid_t), to, 16);
+      }
+  }
 }
 
-int encrypt(struct meshFrame &m) {
-  int size = ((m.secred.header.length + sizeof(m.secred.header))/16)*16+16;
-  uint8_t to[size];
-  uint8_t *from = (uint8_t *)&m.secred;
-  uint8_t *key = aes_secredKey;
- #ifdef DISABLE_CRYPTING
-   memcpy((void*)to,(void*)from,size);
- #else
-    #ifdef ESP32
-     unsigned char iv[16];
-     memcpy(iv,ivKey,sizeof(iv));
+int encrypt(struct meshFrame *m) {
+  int size = ((m->secred.header.length + sizeof(m->secred.header))/16)*16+16;
+  unsigned char iv[16];
+  memcpy(iv,ivKey,sizeof(iv));
+  uint8_t to[2*16];
 
-     esp_aes_acquire_hardware();
-     esp_aes_context ctx;
-     esp_aes_init( &ctx );
-     esp_aes_setkey( &ctx, key, 128 );
-     esp_aes_crypt_cbc(&ctx, ESP_AES_ENCRYPT, size, iv, from, to);
-     esp_aes_free(&ctx);
-     esp_aes_release_hardware();
-
-    #else
-      byte iv[16];
-      memcpy(iv,ivKey,sizeof(iv));
-      AES aesLib;
-      aesLib.set_key( (byte *)key , sizeof(key));
-      aesLib.do_aes_encrypt((byte *)from,size , to, key, 128, iv);
-    #endif
-  #endif
-  memcpy(&m.secred, to, sizeof(to));
-
-  for(int i=m.secred.header.length + sizeof(m.secred.header)+1;i<size;i++) {
-    #ifdef ESP32
-    ((unsigned char*)&m.secred.header)[i]=esp_random();
-    #else
-    ((unsigned char*)&m.secred.header)[i]=random(0, 255);
-    #endif
+  for(int i=0;i<size;i=i+16) {
+      uint8_t *from = (uint8_t *)&m->secred+i;
+      uint8_t *key = aes_secredKey;
+     #ifdef DISABLE_CRYPTING
+       memcpy((void*)to,(void*)from,16);
+     #else
+        #ifdef ESP32
+         esp_aes_context ctx;
+         esp_aes_init( &ctx );
+         esp_aes_setkey( &ctx, key, 128 );
+         esp_aes_acquire_hardware();
+         esp_aes_crypt_cbc(&ctx, ESP_AES_ENCRYPT, 16, iv, from, to);
+         esp_aes_release_hardware();
+         esp_aes_free(&ctx);
+        #else
+          AES aesLib;
+          aesLib.set_key( (byte *)key , sizeof(key));
+          aesLib.do_aes_encrypt((byte *)from, size , (uint8_t *)&m->secred, key, 128, iv);
+          break;
+        #endif
+      #endif
+      memcpy((uint8_t*)m+i+sizeof(bsid_t), to, 16);
   }
-
+/*
+  for(int i=m->secred.header.length + sizeof(m->secred.header)+1;i<size;i++) {
+    #ifdef ESP32
+    ((unsigned char*)&m->secred.header)[i]=esp_random();
+    #else
+    ((unsigned char*)&m->secred.header)[i]=random(0, 255);
+    #endif
+  }*/
 
   return size + sizeof(bsid_t);
 }
 
-bool forwardMsg(struct meshFrame &m) {
-  if(m.secred.header.ttl==0) return false;
+bool forwardMsg(struct meshFrame *m) {
+  if(m->secred.header.ttl==0) return false;
 
   //struct meshFrame mesh;
   //memcpy(&mesh,&m, sizeof(mesh));
-  m.secred.header.ttl= m.secred.header.ttl-1;
-  m.secred.header.crc16 = calculateCRC(m);
+  m->secred.header.ttl= m->secred.header.ttl-1;
+  m->secred.header.crc16 = calculateCRC(m);
 
-  int dataToCryptSize = ((m.secred.header.length + sizeof(m.secred.header))/16)*16;
+  int dataToCryptSize = ((m->secred.header.length + sizeof(m->secred.header))/16)*16;
 
   rejectedMessageDB.addMessageToRejectedList(m);
 
@@ -678,13 +695,13 @@ bool forwardMsg(struct meshFrame &m) {
 
   #ifdef DEBUG_PRINTS
   Serial.print("FORWARD:");
-  hexDump((const uint8_t*)&m, size);
+  hexDump((const uint8_t*)m, size);
   #endif
 
   #ifdef USE_RAW_801_11
-      wifi_802_11_send((uint8_t*)(&m), size);
+      wifi_802_11_send((uint8_t*)(m), size);
   #else
-      espnowBroadcast_send((uint8_t*)&m, size);
+      espnowBroadcast_send((uint8_t*)m, size);
   #endif
   return true;
 }
@@ -699,12 +716,13 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr) {
     return false;
   }
 
-  struct meshFrame m;
+  static struct meshFrame m;
   memset(&m,0x00,sizeof(struct meshFrame)); //fill
   m.secred.header.length = size;
   m.secred.header.crc16 = 0;
   m.secred.header.msgId = msgId;
   m.secred.header.ttl= ttl;
+  m.bsid.set(myBsid);
   #ifdef ESP32
     m.secred.header.p1 = esp_random();
   #else
@@ -726,18 +744,23 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr) {
     m.secred.header.p1 = *((uint32_t*)ptr);
   }
 
-  m.secred.header.crc16 = calculateCRC(m);
+  m.secred.header.crc16 = calculateCRC(&m);
   #ifdef DEBUG_PRINTS
    Serial.print("Send0:");
    hexDump((const uint8_t*)&m, size+20);
   #endif
-  rejectedMessageDB.addMessageToRejectedList(m);
-    #ifdef DEBUG_PRINTS
-    Serial.print("Send1:");
-    hexDump((const unsigned char *)&m, 20);
-  #endif
-  int sendSize = encrypt(m);
+  rejectedMessageDB.addMessageToRejectedList(&m);
 
+  int sendSize = encrypt(&m);
+
+/*
+struct meshFrame mm;
+Serial.print("--->:");
+decrypt((const uint8_t*)&m, &mm, sendSize);
+Serial.print("--->:");
+hexDump((const uint8_t*)&mm, size+20);
+Serial.print("--->:");
+*/
 
    #ifdef DEBUG_PRINTS
     Serial.print("Send[RAW]:");
