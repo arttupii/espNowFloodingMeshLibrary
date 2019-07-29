@@ -95,7 +95,7 @@ int espNowFloodingMesh_getTTL() {
 }
 const unsigned char broadcast_mac[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 uint8_t aes_secredKey[] = {0x00,0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,0x99,0xAA,0xBB,0xCC,0xDD,0xEE, 0xFF};
-bool forwardMsg(struct meshFrame *m);
+bool forwardMsg(const uint8_t *data, int len);
 uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr=NULL);
 void hexDump(const uint8_t*b,int len);
 static void (*espNowFloodingMesh_receive_cb)(const uint8_t *, int, uint32_t) = NULL;
@@ -215,7 +215,7 @@ public:
       index=0;
     }
   }
-  void addMessageToRejectedList(struct meshFrame *m) {
+  void addMessageToHandledList(struct meshFrame *m) {
     uint16_t crc = m->unencrypted.crc16;
     for(int i=0;i<REJECTED_LIST_SIZE;i++){
       if(rejectedMsgList[i]==crc) {
@@ -234,16 +234,22 @@ public:
     }
   }
 
-  bool isMessageInRejectedList(struct meshFrame *m) {
+  int isMessageInHandledList(struct meshFrame *m) {
+    bool forwardNeeded=false;
+    bool handled=false;
     uint16_t crc = m->unencrypted.crc16;
     for(int i=0;i<REJECTED_LIST_SIZE;i++){
       if(rejectedMsgList[i]==crc) {
-        if(ttlList[i]>=m->unencrypted.ttl) {
-          return true;
+        handled = true;
+        if(ttlList[i]<m->unencrypted.ttl) {
+          forwardNeeded = true;
         }
+        break;
       }
     }
-    return false;
+    if(forwardNeeded) return 2;
+    if(handled) return 1;
+    return 0;
   }
 private:
     uint16_t rejectedMsgList[REJECTED_LIST_SIZE];
@@ -404,11 +410,13 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
     }
     if(len>=sizeof(struct meshFrame)) return;
 
-    if(rejectedMessageDB.isMessageInRejectedList(&m)) {
-      //Serial.println("Message already handed");
+    int messageStatus = rejectedMessageDB.isMessageInHandledList(&m);
+    if(messageStatus==1) {
+      //Message is already handled... No need to forward
       return;
     }
-    rejectedMessageDB.addMessageToRejectedList(&m);
+    rejectedMessageDB.addMessageToHandledList(&m);
+
 
     //memset(&m,0,sizeof(m));
     decrypt((const uint8_t*)data, &m, len);
@@ -444,94 +452,94 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
           }
 
           bool ok = false;
-
-          if(espNowFloodingMesh_receive_cb) {
-            if( m.encrypted.header.msgId==USER_MSG) {
-              if(messageTimeOk) {
-                espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, 0);
-                ok = true;
-              } else {
-                #ifdef DEBUG_PRINTS
-                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
-                hexDump((uint8_t*)&m,  messageLengtWithHeader);
-                #endif
-              }
-            }
-
-            if( m.encrypted.header.msgId==USER_REQUIRE_REPLY_MSG) {
-              if(messageTimeOk) {
-                const struct requestReplyDbItem* d = requestReplyDB.getCallback(m.encrypted.header.p1);
-                if(d!=NULL){
-                  d->cb(m.encrypted.data, m.encrypted.header.length);
+          if(messageStatus==0) { //if messageStatus==0 --> message is not handled yet.
+            if(espNowFloodingMesh_receive_cb) {
+              if( m.encrypted.header.msgId==USER_MSG) {
+                if(messageTimeOk) {
+                  espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, 0);
+                  ok = true;
                 } else {
-                  espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.p1);
+                  #ifdef DEBUG_PRINTS
+                  Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
+                  hexDump((uint8_t*)&m,  messageLengtWithHeader);
+                  #endif
                 }
-                ok = true;
-              } else {
-                #ifdef DEBUG_PRINTS
-                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
-                hexDump((uint8_t*)&m,  messageLengtWithHeader);
-                #endif
-                print(1,"Message rejected because of time difference.");
+              }
+
+              if( m.encrypted.header.msgId==USER_REQUIRE_REPLY_MSG) {
+                if(messageTimeOk) {
+                  const struct requestReplyDbItem* d = requestReplyDB.getCallback(m.encrypted.header.p1);
+                  if(d!=NULL){
+                    d->cb(m.encrypted.data, m.encrypted.header.length);
+                  } else {
+                    espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.p1);
+                  }
+                  ok = true;
+                } else {
+                  #ifdef DEBUG_PRINTS
+                  Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
+                  hexDump((uint8_t*)&m,  messageLengtWithHeader);
+                  #endif
+                  print(1,"Message rejected because of time difference.");
+                }
+              }
+
+              if(m.encrypted.header.msgId==USER_REQUIRE_RESPONSE_MSG) {
+                if(messageTimeOk) {
+                  espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.p1);
+                  ok = true;
+                } else {
+                  #ifdef DEBUG_PRINTS
+                  Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
+                  hexDump((uint8_t*)&m,  messageLengtWithHeader);
+                  #endif
+                  print(1,"Message rejected because of time difference.");
+                }
               }
             }
-
-            if(m.encrypted.header.msgId==USER_REQUIRE_RESPONSE_MSG) {
-              if(messageTimeOk) {
-                espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.p1);
-                ok = true;
-              } else {
-                #ifdef DEBUG_PRINTS
-                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
-                hexDump((uint8_t*)&m,  messageLengtWithHeader);
-                #endif
-                print(1,"Message rejected because of time difference.");
-              }
-            }
-          }
-          if(m.encrypted.header.msgId==INSTANT_TIME_SYNC_REQ) {
-            ok = true;
-            if(masterFlag) {
-              #ifdef DEBUG_PRINTS
-              Serial.println("Send time sync message!! (Requested)");
-              #endif
-              sendMsg(NULL, 0, syncTTL, SYNC_TIME_MSG);
-              //print(3,"Send time sync message!! (Requested)");
-            }
-          }
-          if(m.encrypted.header.msgId==SYNC_TIME_MSG) {
-            if(masterFlag) {
-              //only slaves can be syncronized
-              return;
-            }
-            static time_t last_time_sync = 0;
-            Serial.print("Last sync time:"); Serial.println(last_time_sync);
-            Serial.print("Sync time in message:"); Serial.println(m.encrypted.header.time);
-
-            if(last_time_sync<m.encrypted.header.time || ALLOW_TIME_ERROR_IN_SYNC_MESSAGE) {
+            if(m.encrypted.header.msgId==INSTANT_TIME_SYNC_REQ) {
               ok = true;
-              last_time_sync = m.encrypted.header.time;
-            //  #ifdef DEBUG_PRINTS
-              Serial.println("TIME SYNC MSG");
-              //currentTime = espNowFloodingMesh_getRTCTime();
-
-              Serial.print("Current time: "); Serial.print(asctime(localtime(&currentTime)));
-            //  #endif
-              espNowFloodingMesh_setRTCTime(m.encrypted.header.time);
-          //    #ifdef DEBUG_PRINTS
-              currentTime = espNowFloodingMesh_getRTCTime();
-              Serial.print("    New time: "); Serial.print(asctime(localtime(&currentTime)));
-          //    #endif
-              syncronized = true;
-              print(3,"Time syncronised with master");
+              if(masterFlag) {
+                #ifdef DEBUG_PRINTS
+                Serial.println("Send time sync message!! (Requested)");
+                #endif
+                sendMsg(NULL, 0, syncTTL, SYNC_TIME_MSG);
+                //print(3,"Send time sync message!! (Requested)");
+              }
             }
-          }
+            if(m.encrypted.header.msgId==SYNC_TIME_MSG) {
+              if(masterFlag) {
+                //only slaves can be syncronized
+                return;
+              }
+              static time_t last_time_sync = 0;
+              Serial.print("Last sync time:"); Serial.println(last_time_sync);
+              Serial.print("Sync time in message:"); Serial.println(m.encrypted.header.time);
 
-          if(ok && m.unencrypted.ttl && batteryNode==false) {
-            //Serial.println("TTL");
-            //delay(1);
-            forwardMsg(&m);
-          }
+              if(last_time_sync<m.encrypted.header.time || ALLOW_TIME_ERROR_IN_SYNC_MESSAGE) {
+                ok = true;
+                last_time_sync = m.encrypted.header.time;
+              //  #ifdef DEBUG_PRINTS
+                Serial.println("TIME SYNC MSG");
+                //currentTime = espNowFloodingMesh_getRTCTime();
+
+                Serial.print("Current time: "); Serial.print(asctime(localtime(&currentTime)));
+              //  #endif
+                espNowFloodingMesh_setRTCTime(m.encrypted.header.time);
+            //    #ifdef DEBUG_PRINTS
+                currentTime = espNowFloodingMesh_getRTCTime();
+                Serial.print("    New time: "); Serial.print(asctime(localtime(&currentTime)));
+            //    #endif
+                syncronized = true;
+                print(3,"Time syncronised with master");
+              }
+            }
+        }
+        if(ok && m.unencrypted.ttl>0 && batteryNode==false) {
+          //Serial.println("TTL");
+          //delay(1);
+          forwardMsg(data, len);
+        }
       } else {
       #ifdef DEBUG_PRINTS
         Serial.print("#CRC: ");Serial.print(crc16);Serial.print(" "),Serial.println(crc);
@@ -667,19 +675,13 @@ int encrypt(struct meshFrame *m) {
   return size + SECRED_PART_OFFSET;
 }
 
-bool forwardMsg(struct meshFrame *m) {
-  if(m->unencrypted.ttl==0) return false;
+bool forwardMsg(const uint8_t *data, int len) {
+  struct meshFrame m;
+  memcpy(&m, data,len);
 
-  //struct meshFrame mesh;
-  //memcpy(&mesh,&m, sizeof(mesh));
-  m->unencrypted.ttl= m->unencrypted.ttl-1;
-  //m->unencrypted.crc16 = calculateCRC(m);
+  if(m.unencrypted.ttl==0) return false;
 
-  int dataToCryptSize = ((m->encrypted.header.length + sizeof(m->encrypted.header))/16)*16;
-
-  //rejectedMessageDB.addMessageToRejectedList(m);
-
-  int size = encrypt(m);
+  m.unencrypted.ttl = m.unencrypted.ttl-1;
 
   #ifdef DEBUG_PRINTS
   Serial.print("FORWARD:");
@@ -687,9 +689,9 @@ bool forwardMsg(struct meshFrame *m) {
   #endif
 
   #ifdef USE_RAW_801_11
-      wifi_802_11_send((uint8_t*)(m), size);
+      wifi_802_11_send((uint8_t*)(&m), len);
   #else
-      espnowBroadcast_send((uint8_t*)m, size);
+      espnowBroadcast_send((uint8_t*)(&m), len);
   #endif
   return true;
 }
@@ -732,7 +734,7 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr) {
    Serial.print("Send0:");
    hexDump((const uint8_t*)&m, size+20);
   #endif
-  rejectedMessageDB.addMessageToRejectedList(&m);
+  rejectedMessageDB.addMessageToHandledList(&m);
 
   int sendSize = encrypt(&m);
 
