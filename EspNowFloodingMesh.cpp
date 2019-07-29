@@ -49,49 +49,45 @@ time_t time_fix_value;
 int myBsid = 0x112233;
 
 #pragma pack(push,1)
-
 struct header{
 uint8_t msgId;
 uint8_t length;
 uint32_t p1;
-uint8_t ttl;
-uint16_t crc16;
 time_t time;
 };
 
-struct mesh_secred_frame{
+struct mesh_secred_part{
   struct header header;
   uint8_t data[240];
 };
-typedef struct{
-  unsigned char b[3];
-  void set(uint32_t v) {
-      b[0]=(v>>(16))&0xff;
-      b[1]=(v>>(8))&0xff;
-      b[2]=v&0xff;
+
+struct mesh_unencrypted_part{
+  unsigned char bsid[3];
+  uint8_t ttl;
+  uint16_t crc16;
+  void setBsid(uint32_t v) {
+      bsid[0]=(v>>(16))&0xff;
+      bsid[1]=(v>>(8))&0xff;
+      bsid[2]=v&0xff;
   }
    void set(const uint8_t *v) {
-      memcpy(b,v,sizeof(b));
+      memcpy(this,v,sizeof(struct mesh_unencrypted_part));
   }
-  uint32_t operator=(const uint32_t& b) {
-      set(b);
-      return b;
-  }
-  bool operator==(const uint32_t bsId) {
-      return bsId==get();
-  }
-  uint32_t get(){
+  uint32_t getBsid(){
       uint32_t ret=0;
-      ret|=((uint32_t)b[0])<<16;
-      ret|=((uint32_t)b[1])<<8;
-      ret|=((uint32_t)b[2]);
+      ret|=((uint32_t)bsid[0])<<16;
+      ret|=((uint32_t)bsid[1])<<8;
+      ret|=((uint32_t)bsid[2]);
       return ret;
   }
-}bsid_t;
+};
+typedef struct mesh_unencrypted_part unencrypted_t;
+#define SECRED_PART_OFFSET sizeof(unencrypted_t)
+
 
 struct meshFrame{
-  bsid_t bsid;
-  struct mesh_secred_frame secred;
+  unencrypted_t unencrypted;
+  struct mesh_secred_part encrypted;
 };
 #pragma pack(pop);
 int espNowFloodingMesh_getTTL() {
@@ -220,18 +216,17 @@ public:
     }
   }
   void addMessageToRejectedList(struct meshFrame *m) {
-    uint16_t crc = calculateCRCWithoutTTL(m);
-
+    uint16_t crc = m->unencrypted.crc16;
     for(int i=0;i<REJECTED_LIST_SIZE;i++){
       if(rejectedMsgList[i]==crc) {
-        if(ttlList[i]<m->secred.header.ttl) {
-          ttlList[i] = m->secred.header.ttl;
+        if(ttlList[i]<m->unencrypted.ttl) {
+          ttlList[i] = m->unencrypted.ttl;
         }
         return;
       }
     }
     rejectedMsgList[index] = crc;
-    ttlList[index] = m->secred.header.ttl;
+    ttlList[index] = m->unencrypted.ttl;
 
     index++;
     if(index>=REJECTED_LIST_SIZE) {
@@ -240,10 +235,10 @@ public:
   }
 
   bool isMessageInRejectedList(struct meshFrame *m) {
-    uint16_t crc = calculateCRCWithoutTTL(m);
+    uint16_t crc = m->unencrypted.crc16;
     for(int i=0;i<REJECTED_LIST_SIZE;i++){
       if(rejectedMsgList[i]==crc) {
-        if(ttlList[i]>=m->secred.header.ttl) {
+        if(ttlList[i]>=m->unencrypted.ttl) {
           return true;
         }
       }
@@ -254,13 +249,6 @@ private:
     uint16_t rejectedMsgList[REJECTED_LIST_SIZE];
     uint8_t ttlList[REJECTED_LIST_SIZE];
     int index;
-    uint16_t calculateCRCWithoutTTL(struct meshFrame *m) {
-      uint8_t ttl = m->secred.header.ttl;
-      m->secred.header.ttl = 0;
-      uint16_t ret = calculateCRC(m);
-      m->secred.header.ttl = ttl;
-      return ret;
-    }
 };
 RejectedMessageDB rejectedMessageDB;
 
@@ -324,11 +312,11 @@ uint16_t calculateCRC(int c, const unsigned char*b,int len) {
 }
 
 uint16_t calculateCRC(struct meshFrame *m){
-  uint16_t crc = m->secred.header.crc16;
-  m->secred.header.crc16 = 0;
-  int size = m->secred.header.length + sizeof(m->secred.header);
-  uint16_t ret = calculateCRC(0, (const unsigned char*)m + sizeof(bsid_t),size);
-  m->secred.header.crc16 = crc;
+  //uint16_t crc = m->encrypted.header.crc16;
+  //m->encrypted.header.crc16 = 0;
+  int size = m->encrypted.header.length + sizeof(m->encrypted.header);
+  uint16_t ret = calculateCRC(0, (const unsigned char*)m + SECRED_PART_OFFSET,size);
+  //m->encrypted.header.crc16 = crc;
   return ret;
 }
 
@@ -407,30 +395,35 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
   hexDump((uint8_t*)data,len);
   #endif
   struct meshFrame m;
-  m.bsid.set(data);
+  m.unencrypted.set(data);
 
-  if(myBsid!=m.bsid.get()) {
-    Serial.println(myBsid, HEX);
-    Serial.println(m.bsid.get(), HEX);
+    if(myBsid!=m.unencrypted.getBsid()) {
+      //Serial.println(myBsid, HEX);
+      //Serial.println(m.unencrypted.getBsid(), HEX);
+      return;
+    }
+    if(len>=sizeof(struct meshFrame)) return;
 
-    return;
-  }
-  if(len>=sizeof(struct meshFrame)) return;
+    if(rejectedMessageDB.isMessageInRejectedList(&m)) {
+      //Serial.println("Message already handed");
+      return;
+    }
+    rejectedMessageDB.addMessageToRejectedList(&m);
 
     //memset(&m,0,sizeof(m));
     decrypt((const uint8_t*)data, &m, len);
 #ifdef DEBUG_PRINTS
     Serial.print("REC:");
-    hexDump((uint8_t*)&m,m.secred.header.length + sizeof(m.secred.header)+3);
+    hexDump((uint8_t*)&m,m.encrypted.header.length + sizeof(m.encrypted.header)+3);
 #endif
-    if(!(m.secred.header.msgId==USER_MSG||m.secred.header.msgId==SYNC_TIME_MSG||m.secred.header.msgId==INSTANT_TIME_SYNC_REQ
-      ||m.secred.header.msgId==USER_REQUIRE_RESPONSE_MSG||m.secred.header.msgId==USER_REQUIRE_REPLY_MSG)) {
+    if(!(m.encrypted.header.msgId==USER_MSG||m.encrypted.header.msgId==SYNC_TIME_MSG||m.encrypted.header.msgId==INSTANT_TIME_SYNC_REQ
+      ||m.encrypted.header.msgId==USER_REQUIRE_RESPONSE_MSG||m.encrypted.header.msgId==USER_REQUIRE_REPLY_MSG)) {
         //Quick wilter;
         return;
     }
-    if(m.secred.header.length>=0 && m.secred.header.length < (sizeof(m.secred.data) ) ){
-      uint16_t crc = m.secred.header.crc16;
-      int messageLengtWithHeader = m.secred.header.length + sizeof(struct header);
+    if(m.encrypted.header.length>=0 && m.encrypted.header.length < (sizeof(m.encrypted.data) ) ){
+      uint16_t crc = m.unencrypted.crc16;
+      int messageLengtWithHeader = m.encrypted.header.length + sizeof(struct header);
       uint16_t crc16 = calculateCRC(&m);
 
         #ifdef DEBUG_PRINTS
@@ -443,66 +436,60 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
 
         if(crc16==crc) {
 
-          if(!compareTime(currentTime,m.secred.header.time, MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
+          if(!compareTime(currentTime,m.encrypted.header.time, MAX_ALLOWED_TIME_DIFFERENCE_IN_MESSAGES)) {
               messageTimeOk = false;
               print(1,"Received message with invalid time stamp.");
             //  Serial.print("CurrentTime:");Serial.println(currentTime);
-            //  Serial.print("ReceivedTime:");Serial.println(m.secred.header.time);
+            //  Serial.print("ReceivedTime:");Serial.println(m.encrypted.header.time);
           }
-
-          if(rejectedMessageDB.isMessageInRejectedList(&m)) {
-            //Serial.println("Message already handed");
-            return;
-          }
-          rejectedMessageDB.addMessageToRejectedList(&m);
 
           bool ok = false;
 
           if(espNowFloodingMesh_receive_cb) {
-            if( m.secred.header.msgId==USER_MSG) {
+            if( m.encrypted.header.msgId==USER_MSG) {
               if(messageTimeOk) {
-                espNowFloodingMesh_receive_cb(m.secred.data, m.secred.header.length, 0);
+                espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, 0);
                 ok = true;
               } else {
                 #ifdef DEBUG_PRINTS
-                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.secred.header.time);
+                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
                 hexDump((uint8_t*)&m,  messageLengtWithHeader);
                 #endif
               }
             }
 
-            if( m.secred.header.msgId==USER_REQUIRE_REPLY_MSG) {
+            if( m.encrypted.header.msgId==USER_REQUIRE_REPLY_MSG) {
               if(messageTimeOk) {
-                const struct requestReplyDbItem* d = requestReplyDB.getCallback(m.secred.header.p1);
+                const struct requestReplyDbItem* d = requestReplyDB.getCallback(m.encrypted.header.p1);
                 if(d!=NULL){
-                  d->cb(m.secred.data, m.secred.header.length);
+                  d->cb(m.encrypted.data, m.encrypted.header.length);
                 } else {
-                  espNowFloodingMesh_receive_cb(m.secred.data, m.secred.header.length, m.secred.header.p1);
+                  espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.p1);
                 }
                 ok = true;
               } else {
                 #ifdef DEBUG_PRINTS
-                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.secred.header.time);
+                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
                 hexDump((uint8_t*)&m,  messageLengtWithHeader);
                 #endif
                 print(1,"Message rejected because of time difference.");
               }
             }
 
-            if(m.secred.header.msgId==USER_REQUIRE_RESPONSE_MSG) {
+            if(m.encrypted.header.msgId==USER_REQUIRE_RESPONSE_MSG) {
               if(messageTimeOk) {
-                espNowFloodingMesh_receive_cb(m.secred.data, m.secred.header.length, m.secred.header.p1);
+                espNowFloodingMesh_receive_cb(m.encrypted.data, m.encrypted.header.length, m.encrypted.header.p1);
                 ok = true;
               } else {
                 #ifdef DEBUG_PRINTS
-                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.secred.header.time);
+                Serial.print("Reject message because of time difference:");Serial.print(currentTime);Serial.print(" ");Serial.println(m.encrypted.header.time);
                 hexDump((uint8_t*)&m,  messageLengtWithHeader);
                 #endif
                 print(1,"Message rejected because of time difference.");
               }
             }
           }
-          if(m.secred.header.msgId==INSTANT_TIME_SYNC_REQ) {
+          if(m.encrypted.header.msgId==INSTANT_TIME_SYNC_REQ) {
             ok = true;
             if(masterFlag) {
               #ifdef DEBUG_PRINTS
@@ -512,25 +499,25 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
               //print(3,"Send time sync message!! (Requested)");
             }
           }
-          if(m.secred.header.msgId==SYNC_TIME_MSG) {
+          if(m.encrypted.header.msgId==SYNC_TIME_MSG) {
             if(masterFlag) {
               //only slaves can be syncronized
               return;
             }
             static time_t last_time_sync = 0;
             Serial.print("Last sync time:"); Serial.println(last_time_sync);
-            Serial.print("Sync time in message:"); Serial.println(m.secred.header.time);
+            Serial.print("Sync time in message:"); Serial.println(m.encrypted.header.time);
 
-            if(last_time_sync<m.secred.header.time || ALLOW_TIME_ERROR_IN_SYNC_MESSAGE) {
+            if(last_time_sync<m.encrypted.header.time || ALLOW_TIME_ERROR_IN_SYNC_MESSAGE) {
               ok = true;
-              last_time_sync = m.secred.header.time;
+              last_time_sync = m.encrypted.header.time;
             //  #ifdef DEBUG_PRINTS
               Serial.println("TIME SYNC MSG");
               //currentTime = espNowFloodingMesh_getRTCTime();
 
               Serial.print("Current time: "); Serial.print(asctime(localtime(&currentTime)));
             //  #endif
-              espNowFloodingMesh_setRTCTime(m.secred.header.time);
+              espNowFloodingMesh_setRTCTime(m.encrypted.header.time);
           //    #ifdef DEBUG_PRINTS
               currentTime = espNowFloodingMesh_getRTCTime();
               Serial.print("    New time: "); Serial.print(asctime(localtime(&currentTime)));
@@ -540,7 +527,7 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
             }
           }
 
-          if(ok && m.secred.header.ttl && batteryNode==false) {
+          if(ok && m.unencrypted.ttl && batteryNode==false) {
             //Serial.println("TTL");
             //delay(1);
             forwardMsg(&m);
@@ -548,7 +535,7 @@ void msg_recv_cb(const uint8_t *data, int len, uint8_t rssi)
       } else {
       #ifdef DEBUG_PRINTS
         Serial.print("#CRC: ");Serial.print(crc16);Serial.print(" "),Serial.println(crc);
-        for(int i=0;i<m.secred.header.length;i++){
+        for(int i=0;i<m.encrypted.header.length;i++){
           Serial.print("0x");Serial.print(data[i],HEX);Serial.print(",");
         }
         Serial.println();
@@ -609,7 +596,7 @@ int decrypt(const uint8_t *_from, struct meshFrame *m, int size) {
 
   uint8_t to[2*16];
   for(int i=0;i<size;i=i+16) {
-      const uint8_t *from = _from + i + sizeof(bsid_t);
+      const uint8_t *from = _from + i + SECRED_PART_OFFSET;
       uint8_t *key = aes_secredKey;
 
       #ifdef DISABLE_CRYPTING
@@ -632,20 +619,21 @@ int decrypt(const uint8_t *_from, struct meshFrame *m, int size) {
         #endif
       #endif
 
-      if((i+sizeof(bsid_t)+16)<=sizeof(m->secred)) {
-        memcpy((uint8_t*)m+i+sizeof(bsid_t), to, 16);
+      if((i+SECRED_PART_OFFSET+16)<=sizeof(m->encrypted)) {
+        memcpy((uint8_t*)m+i+SECRED_PART_OFFSET, to, 16);
       }
   }
 }
 
 int encrypt(struct meshFrame *m) {
-  int size = ((m->secred.header.length + sizeof(m->secred.header))/16)*16+16;
+  int size = ((m->encrypted.header.length + sizeof(m->encrypted.header))/16)*16+16;
+
   unsigned char iv[16];
   memcpy(iv,ivKey,sizeof(iv));
   uint8_t to[2*16];
 
   for(int i=0;i<size;i=i+16) {
-      uint8_t *from = (uint8_t *)&m->secred+i;
+      uint8_t *from = (uint8_t *)m+i+SECRED_PART_OFFSET;
       uint8_t *key = aes_secredKey;
      #ifdef DISABLE_CRYPTING
        memcpy((void*)to,(void*)from,16);
@@ -661,35 +649,35 @@ int encrypt(struct meshFrame *m) {
         #else
           AES aesLib;
           aesLib.set_key( (byte *)key , sizeof(key));
-          aesLib.do_aes_encrypt((byte *)from, size , (uint8_t *)&m->secred, key, 128, iv);
+          aesLib.do_aes_encrypt((byte *)from, size , (uint8_t *)&m->encrypted, key, 128, iv);
           break;
         #endif
       #endif
-      memcpy((uint8_t*)m+i+sizeof(bsid_t), to, 16);
+      memcpy((uint8_t*)m+i+SECRED_PART_OFFSET, to, 16);
   }
 /*
-  for(int i=m->secred.header.length + sizeof(m->secred.header)+1;i<size;i++) {
+  for(int i=m->encrypted.header.length + sizeof(m->encrypted.header)+1;i<size;i++) {
     #ifdef ESP32
-    ((unsigned char*)&m->secred.header)[i]=esp_random();
+    ((unsigned char*)&m->encrypted.header)[i]=esp_random();
     #else
-    ((unsigned char*)&m->secred.header)[i]=random(0, 255);
+    ((unsigned char*)&m->encrypted.header)[i]=random(0, 255);
     #endif
   }*/
 
-  return size + sizeof(bsid_t);
+  return size + SECRED_PART_OFFSET;
 }
 
 bool forwardMsg(struct meshFrame *m) {
-  if(m->secred.header.ttl==0) return false;
+  if(m->unencrypted.ttl==0) return false;
 
   //struct meshFrame mesh;
   //memcpy(&mesh,&m, sizeof(mesh));
-  m->secred.header.ttl= m->secred.header.ttl-1;
-  m->secred.header.crc16 = calculateCRC(m);
+  m->unencrypted.ttl= m->unencrypted.ttl-1;
+  //m->unencrypted.crc16 = calculateCRC(m);
 
-  int dataToCryptSize = ((m->secred.header.length + sizeof(m->secred.header))/16)*16;
+  int dataToCryptSize = ((m->encrypted.header.length + sizeof(m->encrypted.header))/16)*16;
 
-  rejectedMessageDB.addMessageToRejectedList(m);
+  //rejectedMessageDB.addMessageToRejectedList(m);
 
   int size = encrypt(m);
 
@@ -709,7 +697,7 @@ bool forwardMsg(struct meshFrame *m) {
 
 uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr) {
   uint32_t ret=0;
-  if(size>=sizeof(struct mesh_secred_frame)) {
+  if(size>=sizeof(struct mesh_secred_part)) {
     #ifdef DEBUG_PRINTS
     Serial.println("espNowFloodingMesh_send: Invalid size");
     #endif
@@ -718,33 +706,28 @@ uint32_t sendMsg(uint8_t* msg, int size, int ttl, int msgId, void *ptr) {
 
   static struct meshFrame m;
   memset(&m,0x00,sizeof(struct meshFrame)); //fill
-  m.secred.header.length = size;
-  m.secred.header.crc16 = 0;
-  m.secred.header.msgId = msgId;
-  m.secred.header.ttl= ttl;
-  m.bsid.set(myBsid);
-  #ifdef ESP32
-    m.secred.header.p1 = esp_random();
-  #else
-    m.secred.header.p1 = random(0, 0xffffffff);
-  #endif
-
-  m.secred.header.time = espNowFloodingMesh_getRTCTime();
+  m.encrypted.header.length = size;
+  m.unencrypted.crc16 = 0;
+  m.encrypted.header.msgId = msgId;
+  m.unencrypted.ttl= ttl;
+  m.unencrypted.setBsid(myBsid);
+  m.encrypted.header.p1 = requestReplyDB.calculateMessageIdentifier();
+  m.encrypted.header.time = espNowFloodingMesh_getRTCTime();
 
   if(msg!=NULL){
-    memcpy(m.secred.data, msg, size);
+    memcpy(m.encrypted.data, msg, size);
   }
 
   if(msgId==USER_REQUIRE_RESPONSE_MSG) {
-    m.secred.header.p1 = requestReplyDB.calculateMessageIdentifier();
-    ret = m.secred.header.p1;
-    requestReplyDB.add(m.secred.header.p1, (void (*)(const uint8_t*, int))ptr);
-    //Serial.print("Send request with "); Serial.println(m.secred.header.p1);
+
+    ret = m.encrypted.header.p1;
+    requestReplyDB.add(m.encrypted.header.p1, (void (*)(const uint8_t*, int))ptr);
+    //Serial.print("Send request with "); Serial.println(m.encrypted.header.p1);
   } if(msgId==USER_REQUIRE_REPLY_MSG && ptr!=NULL) {
-    m.secred.header.p1 = *((uint32_t*)ptr);
+    m.encrypted.header.p1 = *((uint32_t*)ptr);
   }
 
-  m.secred.header.crc16 = calculateCRC(&m);
+  m.unencrypted.crc16 = calculateCRC(&m);
   #ifdef DEBUG_PRINTS
    Serial.print("Send0:");
    hexDump((const uint8_t*)&m, size+20);
