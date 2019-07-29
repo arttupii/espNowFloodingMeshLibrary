@@ -685,7 +685,7 @@ bool forwardMsg(const uint8_t *data, int len) {
 
   #ifdef DEBUG_PRINTS
   Serial.print("FORWARD:");
-  hexDump((const uint8_t*)m, size);
+  hexDump((const uint8_t*)data, len);
   #endif
 
   #ifdef USE_RAW_801_11
