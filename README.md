@@ -7,13 +7,14 @@ ESPNOW flooding mesh library.
 Features:
 - Maximum number of slave nodes: unlimited
 - Number of master nodes: 1
-- Master node sends time sync message every 10s to all nodes. (clocks are syncronised)
+- Master node sends time sync message every 10s to all nodes. (this synchronizes the clocks of the nodes)
+- a message cache. If a received packet is already found in the cache --> it will not be retransmitted or handled again
 - Every message has a time stamp. If the time stamp is too old (or from the future), the message will be rejected.
 - All messages are crypted (AES128)
 - Flooding mesh support
 - TTL support (time to life)
 - ESP32, ESP2866, ESP01
-- Battery node support
+- Battery node support (Battery nodes do not relay messages)
 - Request&Reply support
 - Each Nodes can communicate with each other
 - Ping about 40-60ms
@@ -21,7 +22,7 @@ Features:
 - Retransmission support
 - Request/Reply support
 - Send and pray support (Send a message to all nodes without reply/ack)
-- Easy to configure
+- Easy to configure (Set only the same bsid, iv and secred key to all nodes)
 - Works on esp-now broadcast
 - Arduino
 
