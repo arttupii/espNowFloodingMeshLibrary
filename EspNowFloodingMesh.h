@@ -35,6 +35,8 @@
 
     void espNowFloodingMesh_ErrorDebugCB(void (*callback)(int,const char *));
 
+    void espNowFloodingMesh_disableTimeDifferenceCheck(bool disable=true); //Decreases security, but you can communicate without master and without timesync
+
     uint32_t espNowFloodingMesh_sendAndHandleReply(uint8_t* msg, int size, int ttl, void (*f)(const uint8_t *, int)); //Max message length is 236byte
 
     //Run this only in Mainloop!!!

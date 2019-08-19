@@ -43,6 +43,7 @@ unsigned char ivKey[16] = {0xb2, 0x4b, 0xf2, 0xf7, 0x7a, 0xc5, 0xec, 0x0c, 0x5e,
 bool masterFlag = false;
 bool syncronized = false;
 bool batteryNode = false;
+bool timeStampCheckDisabled = false;
 uint8_t syncTTL = 0;
 bool isespNowFloodingMeshInitialized = false;
 time_t time_fix_value;
@@ -113,6 +114,12 @@ void espNowFloodingMesh_ErrorDebugCB(void (*callback)(int, const char *)){
     errorPrintCB = callback;
 }
 
+void espNowFloodingMesh_disableTimeDifferenceCheck(bool disable) {
+    timeStampCheckDisabled = disable;
+    if(disable) {
+        syncronized = true;
+    }
+}
 void print(int level, const char * format, ... )
 {
 
@@ -381,6 +388,10 @@ time_t espNowFloodingMesh_getRTCTime() {
 #endif
 
 bool compareTime(time_t current, time_t received, time_t maxDifference) {
+  if(timeStampCheckDisabled) {
+    return true;
+  }
+
   if(current==received) return true;
   if(current<received) {
     return ((received-current) <= maxDifference);
@@ -805,7 +816,7 @@ bool espNowFloodingMesh_sendAndWaitReply(uint8_t* msg, int size, int ttl, int tr
 }
 
 bool espNowFloodingMesh_syncWithMasterAndWait(int timeoutMs, int tryCount) {
-  if(masterFlag) return true;
+  if(masterFlag || timeStampCheckDisabled) return true;
   syncronized = false;
   for(int i=0;i<tryCount;i++) {
       unsigned long dbtm = millis();
